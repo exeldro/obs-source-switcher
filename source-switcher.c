@@ -191,6 +191,16 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 static void switcher_destroy(void *data)
 {
 	struct switcher_info *switcher = data;
+	if (switcher->current_source) {
+		obs_source_release(switcher->current_source);
+		obs_source_remove_active_child(switcher->source,
+					       switcher->current_source);
+		switcher->current_source = NULL;
+	}
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		obs_source_release(switcher->sources.array[i]);
+	}
+	da_free(switcher->sources);
 	signal_handler_disconnect(obs_get_signal_handler(), "source_rename",
 				  switcher_source_rename, switcher);
 	bfree(switcher);
