@@ -16,6 +16,11 @@ struct switcher_info {
 	bool media_state_switch;
 	int32_t media_switch_state;
 	int32_t media_state_switch_to;
+
+	obs_source_t *transition;
+	bool transition_running;
+	bool transition_resize;
+	uint64_t transition_duration;
 };
 
 static const char *switcher_get_name(void *type_data)
@@ -58,19 +63,49 @@ void switcher_index_changed(struct switcher_info *switcher)
 		switcher->current_index =
 			switcher->loop ? 0 : switcher->sources.num - 1;
 	}
-	if (switcher->current_source !=
-	    switcher->sources.array[switcher->current_index]) {
-		if (switcher->current_source) {
-			obs_source_release(switcher->current_source);
-			obs_source_remove_active_child(
-				switcher->source, switcher->current_source);
-		}
-		switcher->current_source =
-			switcher->sources.array[switcher->current_index];
-		obs_source_addref(switcher->current_source);
-		obs_source_add_active_child(switcher->source,
-					    switcher->current_source);
+	obs_source_t *dest = switcher->sources.array[switcher->current_index];
+	if (switcher->current_source == dest)
+		return;
+
+	if (switcher->current_source) {
+		obs_source_release(switcher->current_source);
+		obs_source_remove_active_child(switcher->source,
+					       switcher->current_source);
 	}
+	if (switcher->transition) {
+		if (!switcher->transition_resize) {
+			uint32_t cx = obs_source_get_width(dest);
+			uint32_t cy = obs_source_get_height(dest);
+			if (switcher->current_source) {
+				const uint32_t cxa = obs_source_get_width(
+					switcher->current_source);
+				if (cxa > cx)
+					cx = cxa;
+				const uint32_t cya = obs_source_get_height(
+					switcher->current_source);
+				if (cya > cy)
+					cy = cya;
+			}
+			obs_transition_set_size(switcher->transition, cx, cy);
+		} else {
+			obs_transition_set_size(
+				switcher->transition,
+				obs_source_get_width(switcher->current_source),
+				obs_source_get_height(
+					switcher->current_source));
+		}
+		obs_transition_set(switcher->transition,
+				   switcher->current_source);
+		obs_transition_start(switcher->transition,
+				     OBS_TRANSITION_MODE_AUTO,
+				     switcher->transition_duration, dest);
+		obs_source_add_active_child(switcher->source,
+					    switcher->transition);
+		switcher->transition_running = true;
+	}
+	switcher->current_source = dest;
+	obs_source_addref(switcher->current_source);
+	obs_source_add_active_child(switcher->source, switcher->current_source);
 }
 
 void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
@@ -81,6 +116,23 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 			obs_source_release(switcher->current_source);
 			obs_source_remove_active_child(
 				switcher->source, switcher->current_source);
+			if (switcher->transition) {
+				obs_transition_set_size(
+					switcher->transition,
+					obs_source_get_width(
+						switcher->current_source),
+					obs_source_get_height(
+						switcher->current_source));
+				obs_transition_set(switcher->transition,
+						   switcher->current_source);
+				obs_transition_start(
+					switcher->transition,
+					OBS_TRANSITION_MODE_AUTO,
+					switcher->transition_duration, NULL);
+				obs_source_add_active_child(
+					switcher->source, switcher->transition);
+				switcher->transition_running = true;
+			}
 			switcher->current_source = NULL;
 		}
 		return;
@@ -219,6 +271,8 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 static void switcher_destroy(void *data)
 {
 	struct switcher_info *switcher = data;
+	signal_handler_disconnect(obs_get_signal_handler(), "source_rename",
+				  switcher_source_rename, switcher);
 	if (switcher->current_source) {
 		obs_source_release(switcher->current_source);
 		obs_source_remove_active_child(switcher->source,
@@ -229,8 +283,7 @@ static void switcher_destroy(void *data)
 		obs_source_release(switcher->sources.array[i]);
 	}
 	da_free(switcher->sources);
-	signal_handler_disconnect(obs_get_signal_handler(), "source_rename",
-				  switcher_source_rename, switcher);
+	obs_source_release(switcher->transition);
 	bfree(switcher);
 }
 
@@ -282,13 +335,92 @@ static void switcher_update(void *data, obs_data_t *settings)
 		obs_data_get_int(settings, S_MEDIA_SWITCH_STATE);
 	switcher->media_state_switch_to =
 		obs_data_get_int(settings, S_MEDIA_STATE_SWITCH_TO);
+
+	const char *transition_id = obs_data_get_string(settings, S_TRANSITION);
+	if (!transition_id || !strlen(transition_id)) {
+		obs_source_release(switcher->transition);
+		switcher->transition = NULL;
+	} else if (switcher->transition &&
+		   strcmp(obs_source_get_id(switcher->transition),
+			  transition_id) == 0) {
+	} else {
+		obs_source_release(switcher->transition);
+		switcher->transition = obs_source_create_private(
+			transition_id,
+			obs_source_get_display_name(transition_id), settings);
+	}
+	if (switcher->transition) {
+		obs_transition_set_alignment(
+			switcher->transition,
+			obs_data_get_int(settings, S_TRANSITION_ALIGNMENT));
+		obs_transition_set_scale_type(
+			switcher->transition,
+			obs_data_get_int(settings, S_TRANSITION_SCALE));
+		obs_source_update(switcher->transition, settings);
+	}
+	switcher->transition_duration =
+		obs_data_get_int(settings, S_TRANSITION_DURATION);
+	switcher->transition_resize =
+		obs_data_get_bool(settings, S_TRANSITION_RESIZE);
+}
+
+bool switcher_transition_active(obs_source_t *transition)
+{
+	if (!transition)
+		return false;
+	const float t = obs_transition_get_time(transition);
+	return t > 0.0f && t < 1.0f;
 }
 
 static void switcher_video_render(void *data, gs_effect_t *effect)
 {
 	struct switcher_info *switcher = data;
-	if (switcher->current_source) {
-		obs_source_video_render(switcher->current_source);
+	if (switcher_transition_active(switcher->transition)) {
+		if (switcher->transition_resize) {
+			obs_source_t *source_a = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_A);
+			obs_source_t *source_b = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_B);
+			uint32_t cxa = 0;
+			uint32_t cya = 0;
+			uint32_t cxb = 0;
+			uint32_t cyb = 0;
+			if (source_a) {
+				cxa = obs_source_get_width(source_a);
+				cya = obs_source_get_height(source_a);
+			}
+			if (source_b) {
+				cxb = obs_source_get_width(source_b);
+				cyb = obs_source_get_height(source_b);
+			}
+			const float t =
+				obs_transition_get_time(switcher->transition);
+			const uint32_t cx =
+				(cxa && cxb)
+					? (uint32_t)((1.0f - t) * (float)cxa +
+						     t * (float)cxb)
+					: cxa + cxb;
+			const uint32_t cy =
+				(cya && cyb)
+					? (uint32_t)((1.0f - t) * (float)cya +
+						     t * (float)cyb)
+					: cya + cyb;
+			obs_source_release(source_a);
+			obs_source_release(source_b);
+			obs_transition_set_size(switcher->transition, cx, cy);
+		}
+		obs_source_video_render(switcher->transition);
+	} else {
+		if (switcher->transition && switcher->transition_running) {
+			switcher->transition_running = false;
+			obs_source_remove_active_child(switcher->source,
+						       switcher->transition);
+			obs_transition_force_stop(switcher->transition);
+			obs_transition_clear(switcher->transition);
+		}
+		if (switcher->current_source) {
+			obs_source_video_render(switcher->current_source);
+		}
 	}
 }
 
@@ -333,6 +465,133 @@ void prop_list_add_switch_to(obs_property_t *p)
 	obs_property_list_add_int(p, obs_module_text("First"), SWITCH_FIRST);
 	obs_property_list_add_int(p, obs_module_text("Last"), SWITCH_LAST);
 	obs_property_list_add_int(p, obs_module_text("Random"), SWITCH_RANDOM);
+}
+
+void prop_list_add_scales(obs_property_t *p)
+{
+	obs_property_list_add_int(p, obs_module_text("TransitionScale.MaxOnly"),
+				  OBS_TRANSITION_SCALE_MAX_ONLY);
+	obs_property_list_add_int(p, obs_module_text("TransitionScale.Aspect"),
+				  OBS_TRANSITION_SCALE_ASPECT);
+	obs_property_list_add_int(p, obs_module_text("TransitionScale.Stretch"),
+				  OBS_TRANSITION_SCALE_STRETCH);
+}
+
+bool remove_prop(obs_properties_t *props, const char *name)
+{
+	obs_property_t *p = obs_properties_get(props, name);
+	if (p) {
+		obs_properties_remove_by_name(props, name);
+		return true;
+	}
+	return false;
+}
+bool switcher_transition_changed(void *data, obs_properties_t *props,
+				 obs_property_t *property, obs_data_t *settings)
+{
+	struct switcher_info *switcher = data;
+	bool changed_props = false;
+	const char *transition_id = obs_data_get_string(settings, S_TRANSITION);
+	obs_properties_t *transition_group = obs_property_group_content(
+		obs_properties_get(props, S_TRANSITION_GROUP));
+	if (!transition_id || !strlen(transition_id)) {
+		if (switcher->transition) {
+			obs_source_release(switcher->transition);
+			switcher->transition = NULL;
+		}
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_PROPERTIES);
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_DURATION);
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_SCALE);
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_RESIZE);
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_ALIGNMENT);
+		return changed_props;
+	}
+	if (!switcher->transition ||
+	    strcmp(obs_source_get_id(switcher->transition), transition_id) !=
+		    0) {
+		obs_source_release(switcher->transition);
+		switcher->transition = obs_source_create_private(
+			transition_id,
+			obs_source_get_display_name(transition_id), settings);
+		obs_transition_set_alignment(
+			switcher->transition,
+			obs_data_get_int(settings, S_TRANSITION_ALIGNMENT));
+		obs_transition_set_scale_type(
+			switcher->transition,
+			obs_data_get_int(settings, S_TRANSITION_SCALE));
+	}
+
+	obs_property_t *p =
+		obs_properties_get(transition_group, S_TRANSITION_DURATION);
+	if (obs_transition_fixed(switcher->transition)) {
+		changed_props |=
+			remove_prop(transition_group, S_TRANSITION_DURATION);
+	} else if (!p) {
+		p = obs_properties_add_int(transition_group,
+					   S_TRANSITION_DURATION,
+					   obs_module_text("Duration"), 50,
+					   10000, 100);
+		obs_property_int_set_suffix(p, "ms");
+		changed_props = true;
+	}
+	p = obs_properties_get(transition_group, S_TRANSITION_SCALE);
+	if (!p) {
+
+		p = obs_properties_add_list(
+			transition_group, S_TRANSITION_SCALE,
+			obs_module_text("TransitionScaleType"),
+			OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		prop_list_add_scales(p);
+	}
+	p = obs_properties_get(transition_group, S_TRANSITION_RESIZE);
+	if (!p) {
+		p = obs_properties_add_bool(transition_group,
+					    S_TRANSITION_RESIZE,
+					    obs_module_text("Resize"));
+	}
+	p = obs_properties_get(transition_group, S_TRANSITION_ALIGNMENT);
+	if (!p) {
+		p = obs_properties_add_list(transition_group,
+					    S_TRANSITION_ALIGNMENT,
+					    obs_module_text("Alignment"),
+					    OBS_COMBO_TYPE_LIST,
+					    OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(p, obs_module_text("TopLeft"),
+					  OBS_ALIGN_TOP | OBS_ALIGN_LEFT);
+		obs_property_list_add_int(p, obs_module_text("Top"),
+					  OBS_ALIGN_TOP);
+		obs_property_list_add_int(p, obs_module_text("TopRight"),
+					  OBS_ALIGN_TOP | OBS_ALIGN_RIGHT);
+		obs_property_list_add_int(p, obs_module_text("Left"),
+					  OBS_ALIGN_LEFT);
+		obs_property_list_add_int(p, obs_module_text("Center"),
+					  OBS_ALIGN_CENTER);
+		obs_property_list_add_int(p, obs_module_text("Right"),
+					  OBS_ALIGN_RIGHT);
+		obs_property_list_add_int(p, obs_module_text("BottomLeft"),
+					  OBS_ALIGN_BOTTOM | OBS_ALIGN_LEFT);
+		obs_property_list_add_int(p, obs_module_text("Bottom"),
+					  OBS_ALIGN_BOTTOM);
+		obs_property_list_add_int(p, obs_module_text("BottomRight"),
+					  OBS_ALIGN_BOTTOM | OBS_ALIGN_RIGHT);
+	}
+
+	if (obs_is_source_configurable(transition_id)) {
+		obs_properties_remove_by_name(transition_group,
+					      S_TRANSITION_PROPERTIES);
+		obs_properties_add_group(
+			transition_group, S_TRANSITION_PROPERTIES,
+			obs_module_text("Properties"), OBS_GROUP_NORMAL,
+			obs_source_properties(switcher->transition));
+		return true;
+	}
+	changed_props |= remove_prop(transition_group, S_TRANSITION_PROPERTIES);
+	return changed_props;
 }
 
 static obs_properties_t *switcher_properties(void *data)
@@ -398,6 +657,27 @@ static obs_properties_t *switcher_properties(void *data)
 	obs_properties_add_group(ppts, S_MEDIA_STATE_SWITCH,
 				 obs_module_text("MediaStateSwitch"),
 				 OBS_GROUP_CHECKABLE, mssppts);
+
+	obs_properties_t *transition_group = obs_properties_create();
+
+	p = obs_properties_add_list(transition_group, S_TRANSITION,
+				    obs_module_text("TransitionType"),
+				    OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_STRING);
+
+	obs_property_set_modified_callback2(p, switcher_transition_changed,
+					    data);
+	obs_property_list_add_string(p, obs_module_text("None"), "");
+	size_t idx = 0;
+	const char *id;
+	while (obs_enum_transition_types(idx++, &id)) {
+		const char *name = obs_source_get_display_name(id);
+		obs_property_list_add_string(p, name, id);
+	}
+	obs_properties_add_group(ppts, S_TRANSITION_GROUP,
+				 obs_module_text("Transition"),
+				 OBS_GROUP_NORMAL, transition_group);
+
 	return ppts;
 }
 
@@ -412,11 +692,45 @@ void switcher_defaults(obs_data_t *settings)
 				 OBS_MEDIA_STATE_STOPPED);
 	obs_data_set_default_int(settings, S_MEDIA_STATE_SWITCH_TO,
 				 SWITCH_NEXT);
+
+	obs_data_set_default_int(settings, S_TRANSITION_DURATION, 1000);
+	obs_data_set_default_int(settings, S_TRANSITION_SCALE,
+				 OBS_TRANSITION_SCALE_ASPECT);
+	obs_data_set_default_int(settings, S_TRANSITION_ALIGNMENT,
+				 OBS_ALIGN_CENTER);
+	obs_data_set_default_bool(settings, S_TRANSITION_RESIZE, true);
 }
 
 uint32_t switcher_get_width(void *data)
 {
 	struct switcher_info *switcher = data;
+	if (switcher_transition_active(switcher->transition)) {
+		if (switcher->transition_resize) {
+			obs_source_t *source_a = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_A);
+			obs_source_t *source_b = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_B);
+			uint32_t cxa = 0;
+			uint32_t cxb = 0;
+			if (source_a) {
+				cxa = obs_source_get_width(source_a);
+			}
+			if (source_b) {
+				cxb = obs_source_get_width(source_b);
+			}
+			const float t =
+				obs_transition_get_time(switcher->transition);
+			const uint32_t cx =
+				(cxa && cxb)
+					? (uint32_t)((1.0f - t) * (float)cxa +
+						     t * (float)cxb)
+					: cxa + cxb;
+			obs_source_release(source_a);
+			obs_source_release(source_b);
+			return cx;
+		}
+		return obs_source_get_width(switcher->transition);
+	}
 	if (switcher->current_source)
 		return obs_source_get_width(switcher->current_source);
 	return 0;
@@ -425,6 +739,33 @@ uint32_t switcher_get_width(void *data)
 uint32_t switcher_get_height(void *data)
 {
 	struct switcher_info *switcher = data;
+	if (switcher_transition_active(switcher->transition)) {
+		if (switcher->transition_resize) {
+			obs_source_t *source_a = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_A);
+			obs_source_t *source_b = obs_transition_get_source(
+				switcher->transition, OBS_TRANSITION_SOURCE_B);
+			uint32_t cya = 0;
+			uint32_t cyb = 0;
+			if (source_a) {
+				cya = obs_source_get_height(source_a);
+			}
+			if (source_b) {
+				cyb = obs_source_get_height(source_b);
+			}
+			const float t =
+				obs_transition_get_time(switcher->transition);
+			const uint32_t cy =
+				(cya && cyb)
+					? (uint32_t)((1.0f - t) * (float)cya +
+						     t * (float)cyb)
+					: cya + cyb;
+			obs_source_release(source_a);
+			obs_source_release(source_b);
+			return cy;
+		}
+		return obs_source_get_height(switcher->transition);
+	}
 	if (switcher->current_source)
 		return obs_source_get_height(switcher->current_source);
 	return 0;
@@ -435,6 +776,8 @@ static void switcher_enum_active_sources(void *data,
 					 void *param)
 {
 	struct switcher_info *switcher = data;
+	if (switcher_transition_active(switcher->transition))
+		enum_callback(switcher->source, switcher->transition, param);
 	if (switcher->current_source)
 		enum_callback(switcher->source, switcher->current_source,
 			      param);
@@ -455,6 +798,9 @@ static void switcher_enum_all_sources(void *data,
 	if (!current_found && switcher->current_source) {
 		enum_callback(switcher->source, switcher->current_source,
 			      param);
+	}
+	if (switcher->transition) {
+		enum_callback(switcher->source, switcher->transition, param);
 	}
 }
 

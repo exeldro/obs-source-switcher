@@ -11,6 +11,14 @@
 #define S_MEDIA_STATE_SWITCH "media_state_switch"
 #define S_MEDIA_STATE_SWITCH_TO "media_state_switch_to"
 
+#define S_TRANSITION "transition"
+#define S_TRANSITION_GROUP "transition_group"
+#define S_TRANSITION_DURATION "transition_duration"
+#define S_TRANSITION_SCALE "transition_scale"
+#define S_TRANSITION_ALIGNMENT "transition_alignment"
+#define S_TRANSITION_RESIZE "transition_resize"
+#define S_TRANSITION_PROPERTIES "transition_properties"
+
 #define SWITCH_NONE 0
 #define SWITCH_NEXT 1
 #define SWITCH_PREVIOUS 2
