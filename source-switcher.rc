@@ -1,6 +1,6 @@
 1 VERSIONINFO
- FILEVERSION 0,2,0,0
- PRODUCTVERSION 0,2,0,0
+ FILEVERSION 0,2,1,0
+ PRODUCTVERSION 0,2,1,0
  FILEFLAGSMASK 0x0L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -17,12 +17,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Exeldro"
             VALUE "FileDescription", "Source Switcher"
-            VALUE "FileVersion", "0.2.0"
+            VALUE "FileVersion", "0.2.1"
             VALUE "InternalName", "source-switcher"
             VALUE "LegalCopyright", "(C) Exeldro"
             VALUE "OriginalFilename", "source-switcher"
             VALUE "ProductName", "Source Switcher"
-            VALUE "ProductVersion", "0.2.0"
+            VALUE "ProductVersion", "0.2.1"
         END
     END
     BLOCK "VarFileInfo"

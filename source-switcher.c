@@ -1,10 +1,16 @@
 #include <obs-module.h>
 #include "source-switcher.h"
 
+struct switcher_hotkey_info {
+	obs_hotkey_id hotkey_id;
+	obs_source_t *source;
+};
+
 struct switcher_info {
 	obs_source_t *source;
 	obs_source_t *current_source;
 	DARRAY(obs_source_t *) sources;
+	DARRAY(struct switcher_hotkey_info) hotkeys;
 	size_t current_index;
 	bool loop;
 	uint64_t last_switch_time;
@@ -249,6 +255,8 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 {
 	struct switcher_info *switcher = bzalloc(sizeof(struct switcher_info));
 	switcher->source = source;
+	da_init(switcher->sources);
+	da_init(switcher->hotkeys);
 	obs_hotkey_register_source(source, "none", obs_module_text("None"),
 				   switcher_none_hotkey, switcher);
 	obs_hotkey_register_source(source, "next", obs_module_text("Next"),
@@ -283,8 +291,30 @@ static void switcher_destroy(void *data)
 		obs_source_release(switcher->sources.array[i]);
 	}
 	da_free(switcher->sources);
+	da_free(switcher->hotkeys);
 	obs_source_release(switcher->transition);
 	bfree(switcher);
+}
+void switcher_switch_source_hotkey(void *data, obs_hotkey_id id,
+				   obs_hotkey_t *hotkey, bool pressed)
+{
+	if (!pressed)
+		return;
+	struct switcher_info *switcher = data;
+	obs_source_t *source = NULL;
+	for (size_t i = 0; i < switcher->hotkeys.num; i++) {
+		if (switcher->hotkeys.array[i].hotkey_id == id)
+			source = switcher->hotkeys.array[i].source;
+	}
+	if (!source)
+		return;
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i] == source) {
+			switcher->current_index = i;
+			switcher_index_changed(switcher);
+			break;
+		}
+	}
 }
 
 static void switcher_update(void *data, obs_data_t *settings)
@@ -297,7 +327,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 			obs_source_release(switcher->sources.array[i]);
 		}
 		switcher->sources.num = 0;
-		size_t count = obs_data_array_count(sources);
+		const size_t count = obs_data_array_count(sources);
 		for (size_t i = 0; i < count; i++) {
 			obs_data_t *item = obs_data_array_item(sources, i);
 			const char *source_name =
@@ -306,8 +336,43 @@ static void switcher_update(void *data, obs_data_t *settings)
 				obs_get_source_by_name(source_name);
 			if (source) {
 				da_push_back(switcher->sources, &source);
+				bool found = false;
+				for (size_t j = 0;
+				     !found && j < switcher->hotkeys.num; j++) {
+					if (source ==
+					    switcher->hotkeys.array[j].source)
+						found = true;
+				}
+				if (!found) {
+					struct switcher_hotkey_info h;
+					h.source = source;
+					h.hotkey_id = obs_hotkey_register_source(
+						switcher->source,
+						obs_source_get_name(source),
+						obs_source_get_name(source),
+						switcher_switch_source_hotkey,
+						switcher);
+					da_push_back(switcher->hotkeys, &h);
+				}
 			}
 			obs_data_release(item);
+		}
+		size_t i = 0;
+		while (i < switcher->hotkeys.num) {
+			bool found = false;
+			for (size_t j = 0; !found && j < switcher->sources.num;
+			     j++) {
+				if (switcher->sources.array[j] ==
+				    switcher->hotkeys.array[i].source)
+					found = true;
+			}
+			if (found) {
+				i++;
+			} else {
+				obs_hotkey_unregister(
+					switcher->hotkeys.array[i].hotkey_id);
+				da_erase(switcher->hotkeys, i);
+			}
 		}
 		if (!switcher->sources.num) {
 			switcher->current_index = 0;
