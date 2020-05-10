@@ -272,7 +272,6 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 				   switcher_last_hotkey, switcher);
 	signal_handler_connect(obs_get_signal_handler(), "source_rename",
 			       switcher_source_rename, switcher);
-	obs_source_update(source, settings);
 	return switcher;
 }
 
@@ -903,11 +902,35 @@ void switcher_video_tick(void *data, float seconds)
 	}
 }
 
+void switch_save(void *data, obs_data_t *settings)
+{
+	struct switcher_info *switcher = data;
+	if (switcher->current_source) {
+		obs_data_set_int(settings, "current_index",
+				 switcher->current_index);
+	} else {
+		obs_data_set_int(settings, "current_index", -1);
+	}
+}
+
+void switcher_load(void *data, obs_data_t *settings)
+{
+	struct switcher_info *switcher = data;
+	const long long index = obs_data_get_int(settings, "current_index");
+	if (index >= 0) {
+		switcher->current_index = index;
+		switcher_update(data, settings);
+	} else {
+		switcher_update(data, settings);
+		switcher_switch_to(switcher, SWITCH_NONE);
+	}
+}
+
 struct obs_source_info source_switcher = {
 	.id = "source_switcher",
 	.type = OBS_SOURCE_TYPE_INPUT,
 	.output_flags = OBS_OUTPUT_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			OBS_SOURCE_COMPOSITE,
+			OBS_SOURCE_COMPOSITE | OBS_SOURCE_DO_NOT_DUPLICATE,
 	.get_name = switcher_get_name,
 	.create = switcher_create,
 	.destroy = switcher_destroy,
@@ -921,6 +944,8 @@ struct obs_source_info source_switcher = {
 	.enum_active_sources = switcher_enum_active_sources,
 	.enum_all_sources = switcher_enum_all_sources,
 	.video_tick = switcher_video_tick,
+	.save = switch_save,
+	.load = switcher_load,
 };
 
 OBS_DECLARE_MODULE()
