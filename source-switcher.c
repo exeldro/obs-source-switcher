@@ -906,7 +906,8 @@ void switcher_video_tick(void *data, float seconds)
 struct obs_source_info source_switcher = {
 	.id = "source_switcher",
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_OUTPUT_VIDEO | OBS_SOURCE_COMPOSITE,
+	.output_flags = OBS_OUTPUT_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
+			OBS_SOURCE_COMPOSITE,
 	.get_name = switcher_get_name,
 	.create = switcher_create,
 	.destroy = switcher_destroy,
