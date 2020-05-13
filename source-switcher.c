@@ -108,6 +108,21 @@ void switcher_index_changed(struct switcher_info *switcher)
 		obs_source_add_active_child(switcher->source,
 					    switcher->transition);
 		switcher->transition_running = true;
+		uint32_t cx;
+		uint32_t cy;
+		obs_transition_get_size(switcher->transition, &cx, &cy);
+		blog(LOG_INFO,
+		     "[source-switcher: '%s'] transition to '%s' using '%s' for %i ms, %s {%i,%i}",
+		     obs_source_get_name(switcher->source),
+		     obs_source_get_name(dest),
+		     obs_source_get_name(switcher->transition),
+		     switcher->transition_duration,
+		     switcher->transition_resize ? "resize" : "fixed size", cx,
+		     cy);
+	} else {
+		blog(LOG_INFO, "[source-switcher: '%s'] switch to '%s'",
+		     obs_source_get_name(switcher->source),
+		     obs_source_get_name(dest));
 	}
 	switcher->current_source = dest;
 	obs_source_addref(switcher->current_source);
@@ -138,6 +153,13 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 				obs_source_add_active_child(
 					switcher->source, switcher->transition);
 				switcher->transition_running = true;
+				blog(LOG_INFO,
+				     "[source-switcher: '%s'] transition to none",
+				     obs_source_get_name(switcher->source));
+			} else {
+				blog(LOG_INFO,
+				     "[source-switcher: '%s'] switch to none",
+				     obs_source_get_name(switcher->source));
 			}
 			switcher->current_source = NULL;
 		}
@@ -253,6 +275,7 @@ void switcher_last_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 
 static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 {
+	UNUSED_PARAMETER(settings);
 	struct switcher_info *switcher = bzalloc(sizeof(struct switcher_info));
 	switcher->source = source;
 	da_init(switcher->sources);
@@ -438,6 +461,7 @@ bool switcher_transition_active(obs_source_t *transition)
 
 static void switcher_video_render(void *data, gs_effect_t *effect)
 {
+	UNUSED_PARAMETER(effect);
 	struct switcher_info *switcher = data;
 	if (switcher_transition_active(switcher->transition)) {
 		if (switcher->transition_resize) {
@@ -493,6 +517,7 @@ static bool switcher_audio_render(void *data, uint64_t *ts_out,
 				  uint32_t mixers, size_t channels,
 				  size_t sample_rate)
 {
+	UNUSED_PARAMETER(sample_rate);
 	struct switcher_info *switcher = data;
 	if (!switcher->current_source)
 		return false;
@@ -870,6 +895,7 @@ static void switcher_enum_all_sources(void *data,
 
 void switcher_video_tick(void *data, float seconds)
 {
+	UNUSED_PARAMETER(seconds);
 	struct switcher_info *switcher = data;
 	if (switcher->time_switch) {
 		const uint64_t t = obs_get_video_frame_time();
@@ -888,12 +914,14 @@ void switcher_video_tick(void *data, float seconds)
 		     t - switcher->last_switch_time >
 			     10000000UL)) { // wait 10 ms before start checking state
 			if (switcher->media_switch_state < 0) {
-				if (-switcher->media_switch_state != state) {
+				if (-switcher->media_switch_state !=
+				    (int32_t)state) {
 					switcher_switch_to(
 						switcher,
 						switcher->media_state_switch_to);
 				}
-			} else if (switcher->media_switch_state == state) {
+			} else if (switcher->media_switch_state ==
+				   (int32_t)state) {
 				switcher_switch_to(
 					switcher,
 					switcher->media_state_switch_to);
@@ -946,6 +974,7 @@ struct obs_source_info source_switcher = {
 	.video_tick = switcher_video_tick,
 	.save = switch_save,
 	.load = switcher_load,
+	.icon_type = OBS_ICON_TYPE_SLIDESHOW,
 };
 
 OBS_DECLARE_MODULE()
