@@ -16,4 +16,5 @@ add_library(source-switcher MODULE
 target_link_libraries(source-switcher
 	libobs)
 
+set_target_properties(source-switcher PROPERTIES FOLDER "plugins/exeldro")
 install_obs_plugin_with_data(source-switcher data)
