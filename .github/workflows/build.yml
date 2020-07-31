@@ -211,13 +211,14 @@ jobs:
         if: success()
         run: |
           $env:FILE_DATE=(Get-Date -UFormat "%F")
-          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-win64.zip"
+          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-win64"
           echo "::set-env name=FILE_NAME::${env:FILE_NAME}"
           robocopy .\build64\rundir\RelWithDebInfo\obs-plugins\64bit\ .\package\obs-plugins\64bit ${{ env.PLUGIN_NAME }}.* /E /XF .gitignore
           robocopy .\build64\rundir\RelWithDebInfo\data\obs-plugins\${{ env.PLUGIN_NAME }}\ .\package\data\obs-plugins\${{ env.PLUGIN_NAME }}\ /E /XF .gitignore
-          7z a ${env:FILE_NAME} .\package\*
+          7z a "${env:FILE_NAME}.zip" .\package\*
       - name: "Package Installer (Prereqs)"
         run: |
+          curl "-kL" "https://github.com/Xaymar/msvc-redist-helper/releases/download/0.1/msvc-redist-helper-64.exe" "-f" "--retry" "5" "-o" "msvc-redist-helper.exe"
           curl "-kL" "https://files.jrsoftware.org/is/6/innosetup-6.0.3.exe" "-f" "--retry" "5" "-o" "inno.exe"
           .\inno.exe /VERYSILENT /SP- /SUPPRESSMSGBOXES /NORESTART
       - name: "Package Installer (Compile)"
@@ -265,7 +266,7 @@ jobs:
           7z x dependencies2017.zip -o"${{ github.workspace }}/cmbuild/deps"
       - name: Configure
         run: |
-          mkdir ./build
+          mkdir ./package
           mkdir ./build32
           cd ./build32
           cmake -G"${{ env.CMAKE_GENERATOR }}" -A"Win32" -DCMAKE_SYSTEM_VERSION="${{ env.CMAKE_SYSTEM_VERSION }}" -DBUILD_BROWSER=false -DBUILD_CAPTIONS=false -DCOMPILE_D3D12_HOOK=false -DDepsPath="${{ github.workspace }}/cmbuild/deps/win32" -DQTDIR="${{ github.workspace }}/cmbuild/QT/${{ env.QT_VERSION }}/msvc2017" -DCOPIED_DEPENDENCIES=FALSE -DCOPY_DEPENDENCIES=TRUE ..
@@ -275,14 +276,24 @@ jobs:
         if: success()
         run: |
           $env:FILE_DATE=(Get-Date -UFormat "%F")
-          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-win32.zip"
+          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-win32"
           echo "::set-env name=FILE_NAME::${env:FILE_NAME}"
-          robocopy .\build32\rundir\RelWithDebInfo\obs-plugins\32bit\ .\build\obs-plugins\32bit ${{ env.PLUGIN_NAME }}.* /E /XF .gitignore
-          robocopy .\build32\rundir\RelWithDebInfo\data\obs-plugins\${{ env.PLUGIN_NAME }}\ .\build\data\obs-plugins\${{ env.PLUGIN_NAME }}\ /E /XF .gitignore
-          7z a ${env:FILE_NAME} .\build\*
+          robocopy .\build32\rundir\RelWithDebInfo\obs-plugins\32bit\ .\package\obs-plugins\32bit ${{ env.PLUGIN_NAME }}.* /E /XF .gitignore
+          robocopy .\build32\rundir\RelWithDebInfo\data\obs-plugins\${{ env.PLUGIN_NAME }}\ .\package\data\obs-plugins\${{ env.PLUGIN_NAME }}\ /E /XF .gitignore
+          7z a "${env:FILE_NAME}.zip" .\package\*
+      - name: "Package Installer (Prereqs)"
+        run: |
+          curl "-kL" "https://github.com/Xaymar/msvc-redist-helper/releases/download/0.1/msvc-redist-helper-32.exe" "-f" "--retry" "5" "-o" "msvc-redist-helper.exe"
+          curl "-kL" "https://files.jrsoftware.org/is/6/innosetup-6.0.3.exe" "-f" "--retry" "5" "-o" "inno.exe"
+          .\inno.exe /VERYSILENT /SP- /SUPPRESSMSGBOXES /NORESTART
+      - name: "Package Installer (Compile)"
+        run: |
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /Qp ".\build32\plugins\${{ env.PLUGIN_NAME }}\installer.iss"
       - name: Publish
         if: success()
-        uses: actions/upload-artifact@v2-preview
+        uses: actions/upload-artifact@v2
         with:
           name: '${{ env.FILE_NAME }}'
-          path: '*-win32.zip'
+          path: |
+            *-win32.zip
+            ${{ env.PLUGIN_NAME }}.exe
