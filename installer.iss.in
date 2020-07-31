@@ -27,8 +27,8 @@ LZMAAlgorithm=1
 DefaultDirName={code:GetDirName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-OutputDir="@ISS_PACKAGE_DIR@"
-OutputBaseFilename=@PROJECT_NAME@
+OutputDir="@ISS_FILES_DIR@"
+OutputBaseFilename=@PROJECT_NAME@-installer
 ; Wizard Information
 WizardStyle=modern
 WizardResizable=yes
