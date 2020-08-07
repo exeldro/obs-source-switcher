@@ -217,7 +217,7 @@ jobs:
         if: success()
         run: |
           $env:FILE_DATE=(Get-Date -UFormat "%F")
-          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-win"
+          $env:FILE_NAME="${{ env.PLUGIN_NAME }}-${env:FILE_DATE}-${{ github.sha }}-windows"
           echo "::set-env name=FILE_NAME::${env:FILE_NAME}"
           robocopy .\build32\rundir\RelWithDebInfo\obs-plugins\32bit\ .\package\obs-plugins\32bit ${{ env.PLUGIN_NAME }}.* /E /XF .gitignore
           robocopy .\build64\rundir\RelWithDebInfo\obs-plugins\64bit\ .\package\obs-plugins\64bit ${{ env.PLUGIN_NAME }}.* /E /XF .gitignore
