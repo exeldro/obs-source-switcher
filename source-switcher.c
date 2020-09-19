@@ -1,4 +1,5 @@
 #include <obs-module.h>
+#include <util/circlebuf.h>
 #include "source-switcher.h"
 
 struct switcher_hotkey_info {
@@ -249,6 +250,33 @@ void switcher_random_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 	switcher_switch_to(switcher, SWITCH_RANDOM);
 }
 
+void switcher_shuffle_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
+			    bool pressed)
+{
+	UNUSED_PARAMETER(id);
+	UNUSED_PARAMETER(hotkey);
+
+	struct switcher_info *switcher = data;
+	if (!pressed || !switcher->sources.num)
+		return;
+	obs_data_t * settings = obs_source_get_settings(switcher->source);
+	if (!settings)
+		return;
+	obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
+	if (sources) {
+		const size_t count = obs_data_array_count(sources);
+		for (size_t i = 0; i < count; i++) {
+			obs_data_t *item = obs_data_array_item(sources, i);
+			obs_data_array_erase(sources, i);
+			obs_data_array_insert(sources, (size_t)rand() % count,
+					      item);
+			obs_data_release(item);
+		}
+	}
+	obs_source_update(switcher->source, settings);
+	obs_data_release(settings);
+}
+
 void switcher_first_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 			   bool pressed)
 {
@@ -362,6 +390,16 @@ static void switcher_update(void *data, obs_data_t *settings)
 				switcher->current_source = NULL;
 			}
 		} else {
+			if (switcher->current_source) {
+				for (size_t i = 0; i < switcher->sources.num;
+				     i++) {
+					if (switcher->current_source ==
+					    switcher->sources.array[i]) {
+						switcher->current_index = i;
+						break;
+					}
+				}
+			}
 			switcher_index_changed(switcher);
 		}
 		obs_data_array_release(sources);
@@ -423,6 +461,8 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 				   switcher_previous_hotkey, switcher);
 	obs_hotkey_register_source(source, "random", obs_module_text("Random"),
 				   switcher_random_hotkey, switcher);
+	obs_hotkey_register_source(source, "shuffle", obs_module_text("Shuffle"),
+				   switcher_shuffle_hotkey, switcher);
 	obs_hotkey_register_source(source, "first", obs_module_text("First"),
 				   switcher_first_hotkey, switcher);
 	obs_hotkey_register_source(source, "last", obs_module_text("Last"),
