@@ -73,11 +73,6 @@ void switcher_index_changed(struct switcher_info *switcher)
 	if (switcher->current_source == dest)
 		return;
 
-	if (switcher->current_source) {
-		obs_source_release(switcher->current_source);
-		obs_source_remove_active_child(switcher->source,
-					       switcher->current_source);
-	}
 	if (switcher->transition) {
 		if (!switcher->transition_resize) {
 			uint32_t cx = obs_source_get_width(dest);
@@ -123,6 +118,11 @@ void switcher_index_changed(struct switcher_info *switcher)
 		blog(LOG_INFO, "[source-switcher: '%s'] switch to '%s'",
 		     obs_source_get_name(switcher->source),
 		     obs_source_get_name(dest));
+	}
+	if (switcher->current_source) {
+		obs_source_release(switcher->current_source);
+		obs_source_remove_active_child(switcher->source,
+					       switcher->current_source);
 	}
 	switcher->current_source = dest;
 	obs_source_addref(switcher->current_source);
@@ -273,50 +273,6 @@ void switcher_last_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 	switcher_switch_to(switcher, SWITCH_LAST);
 }
 
-static void *switcher_create(obs_data_t *settings, obs_source_t *source)
-{
-	UNUSED_PARAMETER(settings);
-	struct switcher_info *switcher = bzalloc(sizeof(struct switcher_info));
-	switcher->source = source;
-	da_init(switcher->sources);
-	da_init(switcher->hotkeys);
-	obs_hotkey_register_source(source, "none", obs_module_text("None"),
-				   switcher_none_hotkey, switcher);
-	obs_hotkey_register_source(source, "next", obs_module_text("Next"),
-				   switcher_next_hotkey, switcher);
-	obs_hotkey_register_source(source, "previous",
-				   obs_module_text("Previous"),
-				   switcher_previous_hotkey, switcher);
-	obs_hotkey_register_source(source, "random", obs_module_text("Random"),
-				   switcher_random_hotkey, switcher);
-	obs_hotkey_register_source(source, "first", obs_module_text("First"),
-				   switcher_first_hotkey, switcher);
-	obs_hotkey_register_source(source, "last", obs_module_text("Last"),
-				   switcher_last_hotkey, switcher);
-	signal_handler_connect(obs_get_signal_handler(), "source_rename",
-			       switcher_source_rename, switcher);
-	return switcher;
-}
-
-static void switcher_destroy(void *data)
-{
-	struct switcher_info *switcher = data;
-	signal_handler_disconnect(obs_get_signal_handler(), "source_rename",
-				  switcher_source_rename, switcher);
-	if (switcher->current_source) {
-		obs_source_release(switcher->current_source);
-		obs_source_remove_active_child(switcher->source,
-					       switcher->current_source);
-		switcher->current_source = NULL;
-	}
-	for (size_t i = 0; i < switcher->sources.num; i++) {
-		obs_source_release(switcher->sources.array[i]);
-	}
-	da_free(switcher->sources);
-	da_free(switcher->hotkeys);
-	obs_source_release(switcher->transition);
-	bfree(switcher);
-}
 void switcher_switch_source_hotkey(void *data, obs_hotkey_id id,
 				   obs_hotkey_t *hotkey, bool pressed)
 {
@@ -451,6 +407,52 @@ static void switcher_update(void *data, obs_data_t *settings)
 		obs_data_get_bool(settings, S_TRANSITION_RESIZE);
 }
 
+static void *switcher_create(obs_data_t *settings, obs_source_t *source)
+{
+	UNUSED_PARAMETER(settings);
+	struct switcher_info *switcher = bzalloc(sizeof(struct switcher_info));
+	switcher->source = source;
+	da_init(switcher->sources);
+	da_init(switcher->hotkeys);
+	obs_hotkey_register_source(source, "none", obs_module_text("None"),
+				   switcher_none_hotkey, switcher);
+	obs_hotkey_register_source(source, "next", obs_module_text("Next"),
+				   switcher_next_hotkey, switcher);
+	obs_hotkey_register_source(source, "previous",
+				   obs_module_text("Previous"),
+				   switcher_previous_hotkey, switcher);
+	obs_hotkey_register_source(source, "random", obs_module_text("Random"),
+				   switcher_random_hotkey, switcher);
+	obs_hotkey_register_source(source, "first", obs_module_text("First"),
+				   switcher_first_hotkey, switcher);
+	obs_hotkey_register_source(source, "last", obs_module_text("Last"),
+				   switcher_last_hotkey, switcher);
+	signal_handler_connect(obs_get_signal_handler(), "source_rename",
+			       switcher_source_rename, switcher);
+	switcher_update(switcher, settings);
+	return switcher;
+}
+
+static void switcher_destroy(void *data)
+{
+	struct switcher_info *switcher = data;
+	signal_handler_disconnect(obs_get_signal_handler(), "source_rename",
+				  switcher_source_rename, switcher);
+	if (switcher->current_source) {
+		obs_source_release(switcher->current_source);
+		obs_source_remove_active_child(switcher->source,
+					       switcher->current_source);
+		switcher->current_source = NULL;
+	}
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		obs_source_release(switcher->sources.array[i]);
+	}
+	da_free(switcher->sources);
+	da_free(switcher->hotkeys);
+	obs_source_release(switcher->transition);
+	bfree(switcher);
+}
+
 bool switcher_transition_active(obs_source_t *transition)
 {
 	if (!transition)
@@ -500,11 +502,19 @@ static void switcher_video_render(void *data, gs_effect_t *effect)
 		obs_source_video_render(switcher->transition);
 	} else {
 		if (switcher->transition && switcher->transition_running) {
-			switcher->transition_running = false;
-			obs_source_remove_active_child(switcher->source,
-						       switcher->transition);
-			obs_transition_force_stop(switcher->transition);
-			obs_transition_clear(switcher->transition);
+			const uint64_t t = obs_get_video_frame_time();
+			if (t > switcher->last_switch_time &&
+			    t - switcher->last_switch_time > 10000000UL)
+				{ // wait 10 ms before start checking state
+					switcher->transition_running = false;
+					obs_source_remove_active_child(
+						switcher->source,
+						switcher->transition);
+					obs_transition_force_stop(
+						switcher->transition);
+					obs_transition_clear(
+						switcher->transition);
+				}
 		}
 		if (switcher->current_source) {
 			obs_source_video_render(switcher->current_source);
@@ -925,6 +935,20 @@ void switcher_video_tick(void *data, float seconds)
 				switcher_switch_to(
 					switcher,
 					switcher->media_state_switch_to);
+			} else if (state == OBS_MEDIA_STATE_PLAYING &&
+				   switcher->media_switch_state ==
+					    OBS_MEDIA_STATE_ENDED && switcher->transition && !switcher->transition_running) {
+				const int64_t duration = obs_source_media_get_duration(
+					switcher->current_source);
+				if (duration) {
+					const int64_t time = obs_source_media_get_time(
+						switcher->current_source);
+					if (time <= duration && duration - time < switcher->transition_duration) {
+						switcher_switch_to(
+							switcher,
+							switcher->media_state_switch_to);
+					}
+				}
 			}
 		}
 	}
