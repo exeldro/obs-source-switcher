@@ -1,5 +1,4 @@
 #include <obs-module.h>
-#include <util/circlebuf.h>
 #include "source-switcher.h"
 
 struct switcher_hotkey_info {
@@ -498,7 +497,7 @@ bool switcher_transition_active(obs_source_t *transition)
 	if (!transition)
 		return false;
 	const float t = obs_transition_get_time(transition);
-	return t > 0.0f && t < 1.0f;
+	return t >= 0.0f && t < 1.0f;
 }
 
 static void switcher_video_render(void *data, gs_effect_t *effect)
@@ -554,9 +553,24 @@ static void switcher_video_render(void *data, gs_effect_t *effect)
 						switcher->transition);
 					obs_transition_clear(
 						switcher->transition);
+					if (switcher->current_source) {
+						obs_source_video_render(
+							switcher->current_source);
+					}
+			} else {
+				obs_source_t *source =
+					obs_transition_get_source(
+						switcher->transition,
+						OBS_TRANSITION_SOURCE_A);
+				if (source) {
+					obs_source_video_render(source);
+					obs_source_release(source);
+				}else {
+					obs_source_video_render(
+						switcher->transition);
 				}
-		}
-		if (switcher->current_source) {
+			}
+		}else if (switcher->current_source) {
 			obs_source_video_render(switcher->current_source);
 		}
 	}
