@@ -250,7 +250,7 @@ void switcher_random_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 }
 
 void switcher_shuffle_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
-			    bool pressed)
+			     bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hotkey);
@@ -258,7 +258,7 @@ void switcher_shuffle_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 	struct switcher_info *switcher = data;
 	if (!pressed || !switcher->sources.num)
 		return;
-	obs_data_t * settings = obs_source_get_settings(switcher->source);
+	obs_data_t *settings = obs_source_get_settings(switcher->source);
 	if (!settings)
 		return;
 	obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
@@ -460,7 +460,8 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 				   switcher_previous_hotkey, switcher);
 	obs_hotkey_register_source(source, "random", obs_module_text("Random"),
 				   switcher_random_hotkey, switcher);
-	obs_hotkey_register_source(source, "shuffle", obs_module_text("Shuffle"),
+	obs_hotkey_register_source(source, "shuffle",
+				   obs_module_text("Shuffle"),
 				   switcher_shuffle_hotkey, switcher);
 	obs_hotkey_register_source(source, "first", obs_module_text("First"),
 				   switcher_first_hotkey, switcher);
@@ -543,20 +544,17 @@ static void switcher_video_render(void *data, gs_effect_t *effect)
 		if (switcher->transition && switcher->transition_running) {
 			const uint64_t t = obs_get_video_frame_time();
 			if (t > switcher->last_switch_time &&
-			    t - switcher->last_switch_time > 10000000UL)
-				{ // wait 10 ms before start checking state
-					switcher->transition_running = false;
-					obs_source_remove_active_child(
-						switcher->source,
-						switcher->transition);
-					obs_transition_force_stop(
-						switcher->transition);
-					obs_transition_clear(
-						switcher->transition);
-					if (switcher->current_source) {
-						obs_source_video_render(
-							switcher->current_source);
-					}
+			    t - switcher->last_switch_time >
+				    10000000UL) { // wait 10 ms before start checking state
+				switcher->transition_running = false;
+				obs_source_remove_active_child(
+					switcher->source, switcher->transition);
+				obs_transition_force_stop(switcher->transition);
+				obs_transition_clear(switcher->transition);
+				if (switcher->current_source) {
+					obs_source_video_render(
+						switcher->current_source);
+				}
 			} else {
 				obs_source_t *source =
 					obs_transition_get_source(
@@ -565,12 +563,12 @@ static void switcher_video_render(void *data, gs_effect_t *effect)
 				if (source) {
 					obs_source_video_render(source);
 					obs_source_release(source);
-				}else {
+				} else {
 					obs_source_video_render(
 						switcher->transition);
 				}
 			}
-		}else if (switcher->current_source) {
+		} else if (switcher->current_source) {
 			obs_source_video_render(switcher->current_source);
 		}
 	}
@@ -583,27 +581,22 @@ static bool switcher_audio_render(void *data, uint64_t *ts_out,
 {
 	UNUSED_PARAMETER(sample_rate);
 	struct switcher_info *switcher = data;
-	if (!switcher->current_source)
+	obs_source_t *source = switcher_transition_active(switcher->transition)
+				       ? switcher->transition
+				       : switcher->current_source;
+	if (!source)
 		return false;
 
 	uint64_t timestamp = 0;
 
-	if (!obs_source_audio_pending(switcher->current_source)) {
-		timestamp = obs_source_get_audio_timestamp(
-			switcher->current_source);
+	if (!obs_source_audio_pending(source)) {
+		timestamp = obs_source_get_audio_timestamp(source);
 
 		struct obs_source_audio_mix child_audio;
-		obs_source_get_audio_mix(switcher->current_source,
-					 &child_audio);
-		for (size_t mix = 0; mix < MAX_AUDIO_MIXES; mix++) {
-			if ((mixers & (1 << mix)) == 0)
-				continue;
+		obs_source_get_audio_mix(source, &child_audio);
 
-			for (size_t ch = 0; ch < channels; ch++) {
-				audio_output->output[mix].data[ch] =
-					child_audio.output[mix].data[ch];
-			}
-		}
+		memcpy(audio_output->output[0].data[0],
+		       child_audio.output[0].data[0], TOTAL_AUDIO_SIZE);
 	}
 	*ts_out = timestamp;
 	return true;
@@ -991,13 +984,19 @@ void switcher_video_tick(void *data, float seconds)
 					switcher->media_state_switch_to);
 			} else if (state == OBS_MEDIA_STATE_PLAYING &&
 				   switcher->media_switch_state ==
-					    OBS_MEDIA_STATE_ENDED && switcher->transition && !switcher->transition_running) {
-				const int64_t duration = obs_source_media_get_duration(
-					switcher->current_source);
-				if (duration) {
-					const int64_t time = obs_source_media_get_time(
+					   OBS_MEDIA_STATE_ENDED &&
+				   switcher->transition &&
+				   !switcher->transition_running) {
+				const int64_t duration =
+					obs_source_media_get_duration(
 						switcher->current_source);
-					if (time <= duration && duration - time < switcher->transition_duration) {
+				if (duration) {
+					const int64_t time =
+						obs_source_media_get_time(
+							switcher->current_source);
+					if (time <= duration &&
+					    duration - time <
+						    switcher->transition_duration) {
 						switcher_switch_to(
 							switcher,
 							switcher->media_state_switch_to);

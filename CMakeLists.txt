@@ -1,4 +1,4 @@
-project(source-switcher VERSION 0.2.7)
+project(source-switcher VERSION 0.2.8)
 set(PROJECT_FULL_NAME "Source Switcher")
 
 set(source-switcher_HEADERS
