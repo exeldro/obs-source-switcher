@@ -19,6 +19,10 @@
 #define S_TRANSITION_RESIZE "transition_resize"
 #define S_TRANSITION_PROPERTIES "transition_properties"
 
+#define S_CURRENT_SOURCE_FILE "current_source_file"
+#define S_CURRENT_SOURCE_FILE_PATH "current_source_file_path"
+#define S_CURRENT_SOURCE_FILE_INTERVAL "current_source_file_interval"
+
 #define SWITCH_NONE 0
 #define SWITCH_NEXT 1
 #define SWITCH_PREVIOUS 2

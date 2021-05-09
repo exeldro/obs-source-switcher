@@ -1,5 +1,7 @@
 #include <obs-module.h>
 #include "source-switcher.h"
+#include "version.h"
+#include "util/platform.h"
 
 struct switcher_hotkey_info {
 	obs_hotkey_id hotkey_id;
@@ -27,6 +29,10 @@ struct switcher_info {
 	bool transition_running;
 	bool transition_resize;
 	uint64_t transition_duration;
+	bool current_source_file;
+	char *current_source_file_path;
+	uint64_t current_source_file_interval;
+	float current_source_file_duration;
 };
 
 static const char *switcher_get_name(void *type_data)
@@ -45,7 +51,7 @@ void switcher_source_rename(void *data, calldata_t *call_data)
 		return;
 	obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
 	if (sources) {
-		size_t count = obs_data_array_count(sources);
+		const size_t count = obs_data_array_count(sources);
 		for (size_t i = 0; i < count; i++) {
 			obs_data_t *item = obs_data_array_item(sources, i);
 			const char *source_name =
@@ -127,6 +133,17 @@ void switcher_index_changed(struct switcher_info *switcher)
 	switcher->current_source = dest;
 	obs_source_addref(switcher->current_source);
 	obs_source_add_active_child(switcher->source, switcher->current_source);
+	if (switcher->current_source_file &&
+	    switcher->current_source_file_path &&
+	    strlen(switcher->current_source_file_path)) {
+		const char *source_name =
+			switcher->current_source
+				? obs_source_get_name(switcher->current_source)
+				: "";
+		os_quick_write_utf8_file(switcher->current_source_file_path,
+					 source_name, strlen(source_name),
+					 false);
+	}
 }
 
 void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
@@ -326,6 +343,16 @@ static void switcher_update(void *data, obs_data_t *settings)
 {
 	struct switcher_info *switcher = data;
 	switcher->loop = obs_data_get_bool(settings, S_LOOP);
+	switcher->current_source_file =
+		obs_data_get_bool(settings, S_CURRENT_SOURCE_FILE);
+	if (switcher->current_source_file) {
+		bfree(switcher->current_source_file_path);
+		switcher->current_source_file_path = bstrdup(
+			obs_data_get_string(settings,
+					    S_CURRENT_SOURCE_FILE_PATH));
+		switcher->current_source_file_interval = obs_data_get_int(
+			settings, S_CURRENT_SOURCE_FILE_INTERVAL);
+	}
 	obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
 	if (sources) {
 		for (size_t i = 0; i < switcher->sources.num; i++) {
@@ -442,6 +469,18 @@ static void switcher_update(void *data, obs_data_t *settings)
 		obs_data_get_int(settings, S_TRANSITION_DURATION);
 	switcher->transition_resize =
 		obs_data_get_bool(settings, S_TRANSITION_RESIZE);
+	if (switcher->current_source_file &&
+	    switcher->current_source_file_path &&
+	    strlen(switcher->current_source_file_path) &&
+	    !os_file_exists(switcher->current_source_file_path)) {
+		const char *source_name =
+			switcher->current_source
+				? obs_source_get_name(switcher->current_source)
+				: "";
+		os_quick_write_utf8_file(switcher->current_source_file_path,
+					 source_name, strlen(source_name),
+					 false);
+	}
 }
 
 static void *switcher_create(obs_data_t *settings, obs_source_t *source)
@@ -490,6 +529,7 @@ static void switcher_destroy(void *data)
 	da_free(switcher->sources);
 	da_free(switcher->hotkeys);
 	obs_source_release(switcher->transition);
+	bfree(switcher->current_source_file_path);
 	bfree(switcher);
 }
 
@@ -824,6 +864,23 @@ static obs_properties_t *switcher_properties(void *data)
 				 obs_module_text("Transition"),
 				 OBS_GROUP_NORMAL, transition_group);
 
+	obs_properties_t *file_group = obs_properties_create();
+
+	obs_properties_add_path(file_group, S_CURRENT_SOURCE_FILE_PATH,
+				obs_module_text("File"), OBS_PATH_FILE_SAVE,
+				"Text Files (*.txt);;"
+				"All Files (*.*)",
+				NULL);
+
+	p = obs_properties_add_int(file_group, S_CURRENT_SOURCE_FILE_INTERVAL,
+				   obs_module_text("ReadInterval"), 0, 100000,
+				   100);
+	obs_property_int_set_suffix(p, "ms");
+
+	obs_properties_add_group(ppts, S_CURRENT_SOURCE_FILE,
+				 obs_module_text("CurrentSourceFile"),
+				 OBS_GROUP_CHECKABLE, file_group);
+
 	return ppts;
 }
 
@@ -1005,6 +1062,50 @@ void switcher_video_tick(void *data, float seconds)
 			}
 		}
 	}
+	if (switcher->current_source_file &&
+	    switcher->current_source_file_interval > 0 &&
+	    switcher->current_source_file_path &&
+	    strlen(switcher->current_source_file_path)) {
+		switcher->current_source_file_duration += seconds;
+		if (switcher->current_source_file_duration * 1000.0f >
+		    switcher->current_source_file_interval) {
+			switcher->current_source_file_duration = 0.0f;
+			char *source_name = os_quick_read_utf8_file(
+				switcher->current_source_file_path);
+			if (source_name) {
+				if (strlen(source_name) == 0) {
+					if (switcher->current_source) {
+						switcher_switch_to(switcher,
+								   SWITCH_NONE);
+					}
+				} else if (switcher->current_source &&
+					   strcmp(obs_source_get_name(
+							  switcher->current_source),
+						  source_name) == 0) {
+				} else {
+					for (size_t i = 0;
+					     i < switcher->sources.num; i++) {
+						if (strcmp(obs_source_get_name(
+								   switcher->sources
+									   .array[i]),
+							   source_name) == 0) {
+							if (switcher->current_index !=
+							    i) {
+								switcher->last_switch_time =
+									obs_get_video_frame_time();
+								switcher->current_index =
+									i;
+								switcher_index_changed(
+									switcher);
+							}
+							break;
+						}
+					}
+				}
+				bfree(source_name);
+			}
+		}
+	}
 }
 
 void switch_save(void *data, obs_data_t *settings)
@@ -1069,6 +1170,7 @@ MODULE_EXPORT const char *obs_module_name(void)
 
 bool obs_module_load(void)
 {
+	blog(LOG_INFO, "[Source Switcher] loaded version %s", PROJECT_VERSION);
 	obs_register_source(&source_switcher);
 	return true;
 }

@@ -1,5 +1,7 @@
-project(source-switcher VERSION 0.2.8)
+project(source-switcher VERSION 0.3.0)
 set(PROJECT_FULL_NAME "Source Switcher")
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
 set(source-switcher_HEADERS
 	source-switcher.h)
