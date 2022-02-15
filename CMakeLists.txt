@@ -1,4 +1,6 @@
-project(source-switcher VERSION 0.3.0)
+cmake_minimum_required(VERSION 3.12..4.0)
+
+project(source-switcher VERSION 0.4.0)
 set(PROJECT_FULL_NAME "Source Switcher")
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
@@ -23,11 +25,33 @@ if(WIN32)
 		source-switcher.rc)
 endif()
 
+if(BUILD_OUT_OF_TREE)
+    find_package(LibObs REQUIRED)
+endif()
+
 add_library(source-switcher MODULE
 	${source-switcher_HEADERS}
 	${source-switcher_SOURCES})
 target_link_libraries(source-switcher
-	libobs)
+	libobs
+	obs-frontend-api)
 
-set_target_properties(source-switcher PROPERTIES FOLDER "plugins/exeldro")
-install_obs_plugin_with_data(source-switcher data)
+
+if(BUILD_OUT_OF_TREE)
+    if(NOT LIB_OUT_DIR)
+        set(LIB_OUT_DIR "/lib/obs-plugins")
+    endif()
+    if(NOT DATA_OUT_DIR)
+        set(DATA_OUT_DIR "/share/obs/obs-plugins/source-switcher")
+    endif()
+    set_target_properties(source-switcher PROPERTIES PREFIX "")
+    install(TARGETS source-switcher
+        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/${LIB_OUT_DIR})
+    install(DIRECTORY data/locale
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/${DATA_OUT_DIR})
+else()
+    target_include_directories(source-switcher PRIVATE
+        "${CMAKE_SOURCE_DIR}/UI/obs-frontend-api")
+    set_target_properties(source-switcher PROPERTIES FOLDER "plugins/exeldro")
+    install_obs_plugin_with_data(source-switcher data)
+endif()
