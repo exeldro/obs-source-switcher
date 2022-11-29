@@ -111,7 +111,8 @@ void switcher_index_changed(struct switcher_info *switcher)
 				   switcher->current_source);
 		obs_transition_start(switcher->show_transition,
 				     OBS_TRANSITION_MODE_AUTO,
-				     switcher->transition_duration, dest);
+				     (uint32_t)switcher->transition_duration,
+				     dest);
 		obs_source_add_active_child(switcher->source,
 					    switcher->show_transition);
 		switcher->transition_running = TRANSITION_SHOW;
@@ -123,7 +124,7 @@ void switcher_index_changed(struct switcher_info *switcher)
 		     obs_source_get_name(switcher->source),
 		     obs_source_get_name(dest),
 		     obs_source_get_name(switcher->show_transition),
-		     switcher->transition_duration,
+		     (int)switcher->transition_duration,
 		     switcher->transition_resize ? "resize" : "fixed size", cx,
 		     cy);
 		switcher->current_transition = switcher->show_transition;
@@ -153,7 +154,8 @@ void switcher_index_changed(struct switcher_info *switcher)
 				   switcher->current_source);
 		obs_transition_start(switcher->transition,
 				     OBS_TRANSITION_MODE_AUTO,
-				     switcher->transition_duration, dest);
+				     (uint32_t)switcher->transition_duration,
+				     dest);
 		obs_source_add_active_child(switcher->source,
 					    switcher->transition);
 		switcher->transition_running = TRANSITION_NORMAL;
@@ -165,7 +167,7 @@ void switcher_index_changed(struct switcher_info *switcher)
 		     obs_source_get_name(switcher->source),
 		     obs_source_get_name(dest),
 		     obs_source_get_name(switcher->transition),
-		     switcher->transition_duration,
+		     (int)switcher->transition_duration,
 		     switcher->transition_resize ? "resize" : "fixed size", cx,
 		     cy);
 		switcher->current_transition = switcher->transition;
@@ -215,7 +217,8 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 				obs_transition_start(
 					switcher->hide_transition,
 					OBS_TRANSITION_MODE_AUTO,
-					switcher->transition_duration, NULL);
+					(uint32_t)switcher->transition_duration,
+					NULL);
 				obs_source_add_active_child(
 					switcher->source,
 					switcher->hide_transition);
@@ -237,7 +240,8 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 				obs_transition_start(
 					switcher->transition,
 					OBS_TRANSITION_MODE_AUTO,
-					switcher->transition_duration, NULL);
+					(uint32_t)switcher->transition_duration,
+					NULL);
 				obs_source_add_active_child(
 					switcher->source, switcher->transition);
 				switcher->transition_running =
@@ -395,6 +399,7 @@ void switcher_last_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey,
 void switcher_switch_source_hotkey(void *data, obs_hotkey_id id,
 				   obs_hotkey_t *hotkey, bool pressed)
 {
+	UNUSED_PARAMETER(hotkey);
 	if (!pressed)
 		return;
 	struct switcher_info *switcher = data;
@@ -511,14 +516,15 @@ static void switcher_update(void *data, obs_data_t *settings)
 		obs_data_get_int(settings, S_TIME_SWITCH_DURATION);
 	switcher->time_switch_between =
 		obs_data_get_int(settings, S_TIME_SWITCH_BETWEEN);
-	switcher->time_switch_to = obs_data_get_int(settings, S_TIME_SWITCH_TO);
+	switcher->time_switch_to =
+		(int32_t)obs_data_get_int(settings, S_TIME_SWITCH_TO);
 
 	switcher->media_state_switch =
 		obs_data_get_bool(settings, S_MEDIA_STATE_SWITCH);
 	switcher->media_switch_state =
-		obs_data_get_int(settings, S_MEDIA_SWITCH_STATE);
+		(int32_t)obs_data_get_int(settings, S_MEDIA_SWITCH_STATE);
 	switcher->media_state_switch_to =
-		obs_data_get_int(settings, S_MEDIA_STATE_SWITCH_TO);
+		(int32_t)obs_data_get_int(settings, S_MEDIA_STATE_SWITCH_TO);
 
 	const char *transition_id = obs_data_get_string(settings, S_TRANSITION);
 	if (!transition_id || !strlen(transition_id)) {
@@ -531,7 +537,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 		obs_source_release(switcher->transition);
 		obs_data_t *s =
 			obs_data_get_obj(settings, S_TRANSITION_PROPERTIES);
-		if(s == NULL) { //for backwards compatibility
+		if (s == NULL) { //for backwards compatibility
 			const char *j = obs_data_get_json(settings);
 			s = obs_data_create_from_json(j);
 		}
@@ -542,10 +548,12 @@ static void switcher_update(void *data, obs_data_t *settings)
 	if (switcher->transition) {
 		obs_transition_set_alignment(
 			switcher->transition,
-			obs_data_get_int(settings, S_TRANSITION_ALIGNMENT));
+			(uint32_t)obs_data_get_int(settings,
+						   S_TRANSITION_ALIGNMENT));
 		obs_transition_set_scale_type(
 			switcher->transition,
-			obs_data_get_int(settings, S_TRANSITION_SCALE));
+			(enum obs_transition_scale_type)obs_data_get_int(
+				settings, S_TRANSITION_SCALE));
 	}
 	const char *show_transition_id =
 		obs_data_get_string(settings, S_SHOW_TRANSITION);
@@ -567,10 +575,12 @@ static void switcher_update(void *data, obs_data_t *settings)
 	if (switcher->show_transition) {
 		obs_transition_set_alignment(
 			switcher->show_transition,
-			obs_data_get_int(settings, S_TRANSITION_ALIGNMENT));
+			(uint32_t)obs_data_get_int(settings,
+						   S_TRANSITION_ALIGNMENT));
 		obs_transition_set_scale_type(
 			switcher->show_transition,
-			obs_data_get_int(settings, S_TRANSITION_SCALE));
+			(enum obs_transition_scale_type)obs_data_get_int(
+				settings, S_TRANSITION_SCALE));
 	}
 	const char *hide_transition_id =
 		obs_data_get_string(settings, S_HIDE_TRANSITION);
@@ -592,10 +602,12 @@ static void switcher_update(void *data, obs_data_t *settings)
 	if (switcher->hide_transition) {
 		obs_transition_set_alignment(
 			switcher->hide_transition,
-			obs_data_get_int(settings, S_TRANSITION_ALIGNMENT));
+			(uint32_t)obs_data_get_int(settings,
+						   S_TRANSITION_ALIGNMENT));
 		obs_transition_set_scale_type(
 			switcher->hide_transition,
-			obs_data_get_int(settings, S_TRANSITION_SCALE));
+			(enum obs_transition_scale_type)obs_data_get_int(
+				settings, S_TRANSITION_SCALE));
 	}
 
 	switcher->transition_duration =
@@ -816,6 +828,8 @@ static bool switcher_audio_render(void *data, uint64_t *ts_out,
 				  uint32_t mixers, size_t channels,
 				  size_t sample_rate)
 {
+	UNUSED_PARAMETER(mixers);
+	UNUSED_PARAMETER(channels);
 	UNUSED_PARAMETER(sample_rate);
 	struct switcher_info *switcher = data;
 	obs_source_t *source =
@@ -874,6 +888,7 @@ bool remove_prop(obs_properties_t *props, const char *name)
 bool switcher_transition_changed(void *data, obs_properties_t *props,
 				 obs_property_t *property, obs_data_t *settings)
 {
+	UNUSED_PARAMETER(property);
 	struct switcher_info *switcher = data;
 	const char *transition_id = obs_data_get_string(settings, S_TRANSITION);
 	const char *show_transition_id =
@@ -916,11 +931,12 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 			obs_data_release(s);
 			obs_transition_set_alignment(
 				switcher->transition,
-				obs_data_get_int(settings,
-						 S_TRANSITION_ALIGNMENT));
+				(uint32_t)obs_data_get_int(
+					settings, S_TRANSITION_ALIGNMENT));
 			obs_transition_set_scale_type(
 				switcher->transition,
-				obs_data_get_int(settings, S_TRANSITION_SCALE));
+				(enum obs_transition_scale_type)obs_data_get_int(
+					settings, S_TRANSITION_SCALE));
 		}
 	} else if (switcher->transition) {
 		obs_source_release(switcher->transition);
@@ -939,11 +955,12 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 			obs_data_release(s);
 			obs_transition_set_alignment(
 				switcher->show_transition,
-				obs_data_get_int(settings,
-						 S_TRANSITION_ALIGNMENT));
+				(uint32_t)obs_data_get_int(
+					settings, S_TRANSITION_ALIGNMENT));
 			obs_transition_set_scale_type(
 				switcher->show_transition,
-				obs_data_get_int(settings, S_TRANSITION_SCALE));
+				(enum obs_transition_scale_type)obs_data_get_int(
+					settings, S_TRANSITION_SCALE));
 		}
 	} else if (switcher->show_transition) {
 		obs_source_release(switcher->show_transition);
@@ -962,11 +979,12 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 			obs_data_release(s);
 			obs_transition_set_alignment(
 				switcher->hide_transition,
-				obs_data_get_int(settings,
-						 S_TRANSITION_ALIGNMENT));
+				(uint32_t)obs_data_get_int(
+					settings, S_TRANSITION_ALIGNMENT));
 			obs_transition_set_scale_type(
 				switcher->hide_transition,
-				obs_data_get_int(settings, S_TRANSITION_SCALE));
+				(enum obs_transition_scale_type)obs_data_get_int(
+					settings, S_TRANSITION_SCALE));
 		}
 	} else if (switcher->hide_transition) {
 		obs_source_release(switcher->hide_transition);
@@ -1046,6 +1064,8 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 static bool open_transition_properties(obs_properties_t *props,
 				       obs_property_t *property, void *data)
 {
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
 	const struct switcher_info *switcher = data;
 	if (switcher->transition)
 		obs_frontend_open_source_properties(switcher->transition);
@@ -1056,6 +1076,8 @@ static bool open_show_transition_properties(obs_properties_t *props,
 					    obs_property_t *property,
 					    void *data)
 {
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
 	const struct switcher_info *switcher = data;
 	if (switcher->show_transition)
 		obs_frontend_open_source_properties(switcher->show_transition);
@@ -1066,6 +1088,8 @@ static bool open_hide_transition_properties(obs_properties_t *props,
 					    obs_property_t *property,
 					    void *data)
 {
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
 	const struct switcher_info *switcher = data;
 	if (switcher->hide_transition)
 		obs_frontend_open_source_properties(switcher->hide_transition);
@@ -1205,6 +1229,12 @@ static obs_properties_t *switcher_properties(void *data)
 	obs_properties_add_group(ppts, S_CURRENT_SOURCE_FILE,
 				 obs_module_text("CurrentSourceFile"),
 				 OBS_GROUP_CHECKABLE, file_group);
+
+	obs_properties_add_text(
+		ppts, "plugin_info",
+		"<a href=\"https://obsproject.com/forum/resources/source-switcher.941/\">Source Switcher</a> (" PROJECT_VERSION
+		") by <a href=\"https://www.exeldro.com\">Exeldro</a>",
+		OBS_TEXT_INFO);
 
 	return ppts;
 }
@@ -1396,7 +1426,8 @@ void switcher_video_tick(void *data, float seconds)
 							switcher->current_source);
 					if (time <= duration &&
 					    duration - time <
-						    switcher->transition_duration) {
+						    (int64_t)switcher
+							    ->transition_duration) {
 						switcher_switch_to(
 							switcher,
 							switcher->media_state_switch_to);
@@ -1493,7 +1524,7 @@ void switcher_load(void *data, obs_data_t *settings)
 	struct switcher_info *switcher = data;
 	const long long index = obs_data_get_int(settings, "current_index");
 	if (index >= 0) {
-		switcher->current_index = index;
+		switcher->current_index = (size_t)index;
 		switcher_update(data, settings);
 	} else {
 		switcher_update(data, settings);

@@ -1,16 +1,36 @@
-cmake_minimum_required(VERSION 3.12..4.0)
+# --- Detect if the plugin is build out of tree or not ---
+if(CMAKE_PROJECT_NAME STREQUAL "obs-studio")
+  set(BUILD_OUT_OF_TREE OFF)
+else()
+  set(BUILD_OUT_OF_TREE ON)
+  cmake_minimum_required(VERSION 3.18)
+endif()
 
-project(source-switcher VERSION 0.4.0)
+project(source-switcher VERSION 0.4.1)
 set(PROJECT_FULL_NAME "Source Switcher")
+
+# Set new UUIDs when you start to create a new plugin.
+set(MACOS_PACKAGE_UUID "635D2B1F-6C38-45FC-A0CA-07AAF1B45DAA")
+set(MACOS_INSTALLER_UUID "899B01BE-6416-45F1-BEDC-787E510934C9")
+
+add_library(${PROJECT_NAME} MODULE)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
-set(source-switcher_HEADERS
+target_sources(${PROJECT_NAME} PRIVATE
+	source-switcher.c
 	source-switcher.h)
-set(source-switcher_SOURCES
-	source-switcher.c)
 
-if(WIN32)
+if(BUILD_OUT_OF_TREE)
+	find_package(libobs REQUIRED)
+	find_package(obs-frontend-api REQUIRED)
+	include(cmake/ObsPluginHelpers.cmake)
+	set(OBS_FRONTEND_API_NAME "obs-frontend-api")
+else()
+	set(OBS_FRONTEND_API_NAME "frontend-api")
+endif()
+  
+if(OS_WINDOWS)
 	get_filename_component(ISS_FILES_DIR "${CMAKE_BINARY_DIR}\\..\\package" ABSOLUTE)
 	file(TO_NATIVE_PATH "${ISS_FILES_DIR}" ISS_FILES_DIR)
 	get_filename_component(ISS_PACKAGE_DIR "${CMAKE_PACKAGE_PREFIX}\\.." ABSOLUTE)
@@ -20,38 +40,37 @@ if(WIN32)
 	configure_file("installer.iss.in"
 			"${PROJECT_BINARY_DIR}/installer.iss"
 		)
-	configure_file(resource.rc.in source-switcher.rc)
-	list(APPEND source-switcher_SOURCES
-		source-switcher.rc)
+	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/resource.rc.in ${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}.rc)
+	target_sources(${PROJECT_NAME} PRIVATE 
+		${CMAKE_CURRENT_SOURCE_DIR}/${PROJECT_NAME}.rc)
+elseif(OS_MACOS)
+	set(MACOS_BUNDLEID "com.exeldro.${PROJECT_NAME}")
+	set(MACOSX_PLUGIN_GUI_IDENTIFIER "${MACOS_BUNDLEID}")
+	set(MACOSX_PLUGIN_BUNDLE_VERSION "${PROJECT_VERSION}")
+	set(MACOSX_PLUGIN_SHORT_VERSION_STRING "1")
+	configure_file(cmake/bundle/macos/installer-macos.pkgproj.in ${CMAKE_BINARY_DIR}/installer-macos.generated.pkgproj)
+	target_compile_options(${PROJECT_NAME} PRIVATE -Wall)
 endif()
 
-if(BUILD_OUT_OF_TREE)
-    find_package(LibObs REQUIRED)
-endif()
-
-add_library(source-switcher MODULE
-	${source-switcher_HEADERS}
-	${source-switcher_SOURCES})
-target_link_libraries(source-switcher
-	libobs
-	obs-frontend-api)
-
+target_link_libraries(${PROJECT_NAME}
+	OBS::${OBS_FRONTEND_API_NAME}
+	OBS::libobs)
 
 if(BUILD_OUT_OF_TREE)
     if(NOT LIB_OUT_DIR)
         set(LIB_OUT_DIR "/lib/obs-plugins")
     endif()
     if(NOT DATA_OUT_DIR)
-        set(DATA_OUT_DIR "/share/obs/obs-plugins/source-switcher")
+        set(DATA_OUT_DIR "/share/obs/obs-plugins/${PROJECT_NAME}")
     endif()
-    set_target_properties(source-switcher PROPERTIES PREFIX "")
-    install(TARGETS source-switcher
+    set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "")
+    install(TARGETS ${PROJECT_NAME}
         LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/${LIB_OUT_DIR})
     install(DIRECTORY data/locale
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${DATA_OUT_DIR})
 else()
-    target_include_directories(source-switcher PRIVATE
+    target_include_directories(${PROJECT_NAME} PRIVATE
         "${CMAKE_SOURCE_DIR}/UI/obs-frontend-api")
-    set_target_properties(source-switcher PROPERTIES FOLDER "plugins/exeldro")
-    install_obs_plugin_with_data(source-switcher data)
+    set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER "plugins/exeldro")
 endif()
+setup_plugin_target(${PROJECT_NAME})
