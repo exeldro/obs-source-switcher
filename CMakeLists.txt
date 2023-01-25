@@ -6,7 +6,7 @@ else()
   cmake_minimum_required(VERSION 3.18)
 endif()
 
-project(source-switcher VERSION 0.4.1)
+project(source-switcher VERSION 0.4.2)
 set(PROJECT_FULL_NAME "Source Switcher")
 
 # Set new UUIDs when you start to create a new plugin.

@@ -17,6 +17,7 @@ struct switcher_info {
 	size_t current_index;
 	bool loop;
 	uint64_t last_switch_time;
+	bool log;
 
 	bool time_switch;
 	uint64_t time_switch_duration;
@@ -119,14 +120,16 @@ void switcher_index_changed(struct switcher_info *switcher)
 		uint32_t cx;
 		uint32_t cy;
 		obs_transition_get_size(switcher->show_transition, &cx, &cy);
-		blog(LOG_INFO,
-		     "[source-switcher: '%s'] show transition to '%s' using '%s' for %i ms, %s {%i,%i}",
-		     obs_source_get_name(switcher->source),
-		     obs_source_get_name(dest),
-		     obs_source_get_name(switcher->show_transition),
-		     (int)switcher->transition_duration,
-		     switcher->transition_resize ? "resize" : "fixed size", cx,
-		     cy);
+		if (switcher->log)
+			blog(LOG_INFO,
+			     "[source-switcher: '%s'] show transition to '%s' using '%s' for %i ms, %s {%i,%i}",
+			     obs_source_get_name(switcher->source),
+			     obs_source_get_name(dest),
+			     obs_source_get_name(switcher->show_transition),
+			     (int)switcher->transition_duration,
+			     switcher->transition_resize ? "resize"
+							 : "fixed size",
+			     cx, cy);
 		switcher->current_transition = switcher->show_transition;
 	} else if (switcher->transition) {
 		if (!switcher->transition_resize) {
@@ -162,20 +165,23 @@ void switcher_index_changed(struct switcher_info *switcher)
 		uint32_t cx;
 		uint32_t cy;
 		obs_transition_get_size(switcher->transition, &cx, &cy);
-		blog(LOG_INFO,
-		     "[source-switcher: '%s'] transition to '%s' using '%s' for %i ms, %s {%i,%i}",
-		     obs_source_get_name(switcher->source),
-		     obs_source_get_name(dest),
-		     obs_source_get_name(switcher->transition),
-		     (int)switcher->transition_duration,
-		     switcher->transition_resize ? "resize" : "fixed size", cx,
-		     cy);
+		if (switcher->log)
+			blog(LOG_INFO,
+			     "[source-switcher: '%s'] transition to '%s' using '%s' for %i ms, %s {%i,%i}",
+			     obs_source_get_name(switcher->source),
+			     obs_source_get_name(dest),
+			     obs_source_get_name(switcher->transition),
+			     (int)switcher->transition_duration,
+			     switcher->transition_resize ? "resize"
+							 : "fixed size",
+			     cx, cy);
 		switcher->current_transition = switcher->transition;
 	} else {
 		switcher->current_transition = NULL;
-		blog(LOG_INFO, "[source-switcher: '%s'] switch to '%s'",
-		     obs_source_get_name(switcher->source),
-		     obs_source_get_name(dest));
+		if (switcher->log)
+			blog(LOG_INFO, "[source-switcher: '%s'] switch to '%s'",
+			     obs_source_get_name(switcher->source),
+			     obs_source_get_name(dest));
 	}
 	if (switcher->current_source) {
 		obs_source_release(switcher->current_source);
@@ -223,9 +229,11 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 					switcher->source,
 					switcher->hide_transition);
 				switcher->transition_running = TRANSITION_HIDE;
-				blog(LOG_INFO,
-				     "[source-switcher: '%s'] hide transition to none",
-				     obs_source_get_name(switcher->source));
+				if (switcher->log)
+					blog(LOG_INFO,
+					     "[source-switcher: '%s'] hide transition to none",
+					     obs_source_get_name(
+						     switcher->source));
 				switcher->current_transition =
 					switcher->hide_transition;
 			} else if (switcher->transition) {
@@ -246,16 +254,20 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 					switcher->source, switcher->transition);
 				switcher->transition_running =
 					TRANSITION_NORMAL;
-				blog(LOG_INFO,
-				     "[source-switcher: '%s'] transition to none",
-				     obs_source_get_name(switcher->source));
+				if (switcher->log)
+					blog(LOG_INFO,
+					     "[source-switcher: '%s'] transition to none",
+					     obs_source_get_name(
+						     switcher->source));
 				switcher->current_transition =
 					switcher->transition;
 			} else {
 				switcher->current_transition = NULL;
-				blog(LOG_INFO,
-				     "[source-switcher: '%s'] switch to none",
-				     obs_source_get_name(switcher->source));
+				if (switcher->log)
+					blog(LOG_INFO,
+					     "[source-switcher: '%s'] switch to none",
+					     obs_source_get_name(
+						     switcher->source));
 			}
 			switcher->current_source = NULL;
 		}
@@ -422,6 +434,7 @@ void switcher_switch_source_hotkey(void *data, obs_hotkey_id id,
 static void switcher_update(void *data, obs_data_t *settings)
 {
 	struct switcher_info *switcher = data;
+	switcher->log = obs_data_get_bool(settings, S_LOG);
 	switcher->loop = obs_data_get_bool(settings, S_LOOP);
 	switcher->current_source_file =
 		obs_data_get_bool(settings, S_CURRENT_SOURCE_FILE);
@@ -1105,7 +1118,7 @@ static obs_properties_t *switcher_properties(void *data)
 					 OBS_EDITABLE_LIST_TYPE_STRINGS, NULL,
 					 NULL);
 	obs_properties_add_bool(ppts, S_LOOP, obs_module_text("Loop"));
-
+	obs_properties_add_bool(ppts, S_LOG, obs_module_text("Log"));
 	obs_properties_t *tsppts = obs_properties_create();
 	p = obs_properties_add_int(tsppts, S_TIME_SWITCH_DURATION,
 				   obs_module_text("Duration"), 50, 1000000UL,
@@ -1241,6 +1254,7 @@ static obs_properties_t *switcher_properties(void *data)
 
 void switcher_defaults(obs_data_t *settings)
 {
+	obs_data_set_default_bool(settings, S_LOG, true);
 	obs_data_set_default_bool(settings, S_LOOP, true);
 
 	obs_data_set_default_int(settings, S_TIME_SWITCH_DURATION, 5000);

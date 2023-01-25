@@ -1,6 +1,7 @@
 #pragma once
 
 #define S_SOURCES "sources"
+#define S_LOG "log"
 #define S_LOOP "loop"
 
 #define S_TIME_SWITCH "time_switch"
