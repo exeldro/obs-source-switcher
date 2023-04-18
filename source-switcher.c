@@ -130,7 +130,9 @@ void switcher_index_changed(struct switcher_info *switcher)
 			     switcher->transition_resize ? "resize"
 							 : "fixed size",
 			     cx, cy);
-		switcher->current_transition = switcher->show_transition;
+		obs_source_release(switcher->current_transition);
+		switcher->current_transition =
+			obs_source_get_ref(switcher->show_transition);
 	} else if (switcher->transition) {
 		if (!switcher->transition_resize) {
 			uint32_t cx = obs_source_get_width(dest);
@@ -175,8 +177,11 @@ void switcher_index_changed(struct switcher_info *switcher)
 			     switcher->transition_resize ? "resize"
 							 : "fixed size",
 			     cx, cy);
-		switcher->current_transition = switcher->transition;
+		obs_source_release(switcher->current_transition);
+		switcher->current_transition =
+			obs_source_get_ref(switcher->transition);
 	} else {
+		obs_source_release(switcher->current_transition);
 		switcher->current_transition = NULL;
 		if (switcher->log)
 			blog(LOG_INFO, "[source-switcher: '%s'] switch to '%s'",
@@ -234,8 +239,11 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 					     "[source-switcher: '%s'] hide transition to none",
 					     obs_source_get_name(
 						     switcher->source));
+				obs_source_release(
+					switcher->current_transition);
 				switcher->current_transition =
-					switcher->hide_transition;
+					obs_source_get_ref(
+						switcher->hide_transition);
 			} else if (switcher->transition) {
 				obs_transition_set_size(
 					switcher->transition,
@@ -259,9 +267,14 @@ void switcher_switch_to(struct switcher_info *switcher, int32_t switch_to)
 					     "[source-switcher: '%s'] transition to none",
 					     obs_source_get_name(
 						     switcher->source));
+				obs_source_release(
+					switcher->current_transition);
 				switcher->current_transition =
-					switcher->transition;
+					obs_source_get_ref(
+						switcher->transition);
 			} else {
+				obs_source_release(
+					switcher->current_transition);
 				switcher->current_transition = NULL;
 				if (switcher->log)
 					blog(LOG_INFO,
@@ -541,13 +554,14 @@ static void switcher_update(void *data, obs_data_t *settings)
 
 	const char *transition_id = obs_data_get_string(settings, S_TRANSITION);
 	if (!transition_id || !strlen(transition_id)) {
-		obs_source_release(switcher->transition);
+		obs_source_t *old_transition = switcher->transition;
 		switcher->transition = NULL;
+		obs_source_release(old_transition);
 	} else if (switcher->transition &&
 		   strcmp(obs_source_get_id(switcher->transition),
 			  transition_id) == 0) {
 	} else {
-		obs_source_release(switcher->transition);
+		obs_source_t *old_transition = switcher->transition;
 		obs_data_t *s =
 			obs_data_get_obj(settings, S_TRANSITION_PROPERTIES);
 		if (s == NULL) { //for backwards compatibility
@@ -557,6 +571,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 		switcher->transition = obs_source_create_private(
 			transition_id, obs_module_text("Transition"), s);
 		obs_data_release(s);
+		obs_source_release(old_transition);
 	}
 	if (switcher->transition) {
 		obs_transition_set_alignment(
@@ -681,12 +696,18 @@ static void switcher_destroy(void *data)
 					       switcher->current_source);
 		switcher->current_source = NULL;
 	}
+	if (switcher->current_transition) {
+		obs_source_release(switcher->current_transition);
+		switcher->current_transition = NULL;
+	}
 	for (size_t i = 0; i < switcher->sources.num; i++) {
 		obs_source_release(switcher->sources.array[i]);
 	}
 	da_free(switcher->sources);
 	da_free(switcher->hotkeys);
 	obs_source_release(switcher->transition);
+	obs_source_release(switcher->show_transition);
+	obs_source_release(switcher->hide_transition);
 	bfree(switcher->current_source_file_path);
 	bfree(switcher);
 }
@@ -935,7 +956,7 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 		if (!switcher->transition ||
 		    strcmp(obs_source_get_id(switcher->transition),
 			   transition_id) != 0) {
-			obs_source_release(switcher->transition);
+			obs_source_t *old_transition = switcher->transition;
 			obs_data_t *s = obs_data_get_obj(
 				settings, S_TRANSITION_PROPERTIES);
 			switcher->transition = obs_source_create_private(
@@ -950,16 +971,19 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 				switcher->transition,
 				(enum obs_transition_scale_type)obs_data_get_int(
 					settings, S_TRANSITION_SCALE));
+			obs_source_release(old_transition);
 		}
 	} else if (switcher->transition) {
-		obs_source_release(switcher->transition);
+		obs_source_t *old_transition = switcher->transition;
 		switcher->transition = NULL;
+		obs_source_release(old_transition);
 	}
 	if (show_transition_id && strlen(show_transition_id)) {
 		if (!switcher->show_transition ||
 		    strcmp(obs_source_get_id(switcher->show_transition),
 			   show_transition_id) != 0) {
-			obs_source_release(switcher->show_transition);
+			obs_source_t *old_transition =
+				switcher->show_transition;
 			obs_data_t *s = obs_data_get_obj(
 				settings, S_SHOW_TRANSITION_PROPERTIES);
 			switcher->show_transition = obs_source_create_private(
@@ -974,16 +998,19 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 				switcher->show_transition,
 				(enum obs_transition_scale_type)obs_data_get_int(
 					settings, S_TRANSITION_SCALE));
+			obs_source_release(old_transition);
 		}
 	} else if (switcher->show_transition) {
-		obs_source_release(switcher->show_transition);
+		obs_source_t *old_transition = switcher->show_transition;
 		switcher->show_transition = NULL;
+		obs_source_release(old_transition);
 	}
 	if (hide_transition_id && strlen(hide_transition_id)) {
 		if (!switcher->hide_transition ||
 		    strcmp(obs_source_get_id(switcher->hide_transition),
 			   hide_transition_id) != 0) {
-			obs_source_release(switcher->hide_transition);
+			obs_source_t *old_transition =
+				switcher->hide_transition;
 			obs_data_t *s = obs_data_get_obj(
 				settings, S_SHOW_TRANSITION_PROPERTIES);
 			switcher->hide_transition = obs_source_create_private(
@@ -998,10 +1025,12 @@ bool switcher_transition_changed(void *data, obs_properties_t *props,
 				switcher->hide_transition,
 				(enum obs_transition_scale_type)obs_data_get_int(
 					settings, S_TRANSITION_SCALE));
+			obs_source_release(old_transition);
 		}
 	} else if (switcher->hide_transition) {
-		obs_source_release(switcher->hide_transition);
+		obs_source_t *old_transition = switcher->hide_transition;
 		switcher->hide_transition = NULL;
+		obs_source_release(old_transition);
 	}
 
 	obs_property_t *p =
@@ -1277,12 +1306,14 @@ void switcher_defaults(obs_data_t *settings)
 uint32_t switcher_get_width(void *data)
 {
 	struct switcher_info *switcher = data;
-	if (switcher_transition_active(switcher->transition)) {
+	if (switcher_transition_active(switcher->current_transition)) {
 		if (switcher->transition_resize) {
 			obs_source_t *source_a = obs_transition_get_source(
-				switcher->transition, OBS_TRANSITION_SOURCE_A);
+				switcher->current_transition,
+				OBS_TRANSITION_SOURCE_A);
 			obs_source_t *source_b = obs_transition_get_source(
-				switcher->transition, OBS_TRANSITION_SOURCE_B);
+				switcher->current_transition,
+				OBS_TRANSITION_SOURCE_B);
 			uint32_t cxa = 0;
 			uint32_t cxb = 0;
 			if (source_a) {
@@ -1291,8 +1322,8 @@ uint32_t switcher_get_width(void *data)
 			if (source_b) {
 				cxb = obs_source_get_width(source_b);
 			}
-			const float t =
-				obs_transition_get_time(switcher->transition);
+			const float t = obs_transition_get_time(
+				switcher->current_transition);
 			const uint32_t cx =
 				(cxa && cxb)
 					? (uint32_t)((1.0f - t) * (float)cxa +
@@ -1302,7 +1333,7 @@ uint32_t switcher_get_width(void *data)
 			obs_source_release(source_b);
 			return cx;
 		}
-		return obs_source_get_width(switcher->transition);
+		return obs_source_get_width(switcher->current_transition);
 	}
 	if (switcher->current_source)
 		return obs_source_get_width(switcher->current_source);
@@ -1312,12 +1343,14 @@ uint32_t switcher_get_width(void *data)
 uint32_t switcher_get_height(void *data)
 {
 	struct switcher_info *switcher = data;
-	if (switcher_transition_active(switcher->transition)) {
+	if (switcher_transition_active(switcher->current_transition)) {
 		if (switcher->transition_resize) {
 			obs_source_t *source_a = obs_transition_get_source(
-				switcher->transition, OBS_TRANSITION_SOURCE_A);
+				switcher->current_transition,
+				OBS_TRANSITION_SOURCE_A);
 			obs_source_t *source_b = obs_transition_get_source(
-				switcher->transition, OBS_TRANSITION_SOURCE_B);
+				switcher->current_transition,
+				OBS_TRANSITION_SOURCE_B);
 			uint32_t cya = 0;
 			uint32_t cyb = 0;
 			if (source_a) {
@@ -1326,8 +1359,8 @@ uint32_t switcher_get_height(void *data)
 			if (source_b) {
 				cyb = obs_source_get_height(source_b);
 			}
-			const float t =
-				obs_transition_get_time(switcher->transition);
+			const float t = obs_transition_get_time(
+				switcher->current_transition);
 			const uint32_t cy =
 				(cya && cyb)
 					? (uint32_t)((1.0f - t) * (float)cya +
@@ -1337,7 +1370,7 @@ uint32_t switcher_get_height(void *data)
 			obs_source_release(source_b);
 			return cy;
 		}
-		return obs_source_get_height(switcher->transition);
+		return obs_source_get_height(switcher->current_transition);
 	}
 	if (switcher->current_source)
 		return obs_source_get_height(switcher->current_source);
@@ -1349,8 +1382,21 @@ static void switcher_enum_active_sources(void *data,
 					 void *param)
 {
 	struct switcher_info *switcher = data;
-	if (switcher_transition_active(switcher->transition))
+	if (switcher_transition_active(switcher->current_transition)) {
+		enum_callback(switcher->source, switcher->current_transition,
+			      param);
+	} else if (switcher->transition &&
+		   switcher->transition_running == TRANSITION_NORMAL) {
 		enum_callback(switcher->source, switcher->transition, param);
+	} else if (switcher->show_transition &&
+		   switcher->transition_running == TRANSITION_SHOW) {
+		enum_callback(switcher->source, switcher->show_transition,
+			      param);
+	} else if (switcher->hide_transition &&
+		   switcher->transition_running == TRANSITION_HIDE) {
+		enum_callback(switcher->source, switcher->hide_transition,
+			      param);
+	}
 	if (switcher->current_source)
 		enum_callback(switcher->source, switcher->current_source,
 			      param);
@@ -1372,8 +1418,20 @@ static void switcher_enum_all_sources(void *data,
 		enum_callback(switcher->source, switcher->current_source,
 			      param);
 	}
-	if (switcher->transition) {
+	if (switcher_transition_active(switcher->current_transition)) {
+		enum_callback(switcher->source, switcher->current_transition,
+			      param);
+	} else if (switcher->transition &&
+		   switcher->transition_running == TRANSITION_NORMAL) {
 		enum_callback(switcher->source, switcher->transition, param);
+	} else if (switcher->show_transition &&
+		   switcher->transition_running == TRANSITION_SHOW) {
+		enum_callback(switcher->source, switcher->show_transition,
+			      param);
+	} else if (switcher->hide_transition &&
+		   switcher->transition_running == TRANSITION_HIDE) {
+		enum_callback(switcher->source, switcher->hide_transition,
+			      param);
 	}
 }
 
