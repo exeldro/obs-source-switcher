@@ -39,6 +39,8 @@ struct switcher_info {
 	char *current_source_file_path;
 	uint64_t current_source_file_interval;
 	float current_source_file_duration;
+
+	enum obs_media_state state;
 };
 
 static const char *switcher_get_name(void *type_data)
@@ -449,6 +451,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 	struct switcher_info *switcher = data;
 	switcher->log = obs_data_get_bool(settings, S_LOG);
 	switcher->loop = obs_data_get_bool(settings, S_LOOP);
+	switcher->state = OBS_MEDIA_STATE_NONE;
 	switcher->current_source_file =
 		obs_data_get_bool(settings, S_CURRENT_SOURCE_FILE);
 	if (switcher->current_source_file) {
@@ -1439,7 +1442,7 @@ void switcher_video_tick(void *data, float seconds)
 {
 	UNUSED_PARAMETER(seconds);
 	struct switcher_info *switcher = data;
-	if (switcher->time_switch) {
+	if (switcher->time_switch && switcher->state == OBS_MEDIA_STATE_PLAYING) {
 		const uint64_t t = obs_get_video_frame_time();
 		if (switcher->current_source == NULL) {
 			if (t > switcher->last_switch_time &&
@@ -1554,7 +1557,7 @@ void switcher_video_tick(void *data, float seconds)
 	}
 }
 
-void switch_save(void *data, obs_data_t *settings)
+void switcher_save(void *data, obs_data_t *settings)
 {
 	struct switcher_info *switcher = data;
 	if (switcher->current_source) {
@@ -1604,11 +1607,55 @@ void switcher_load(void *data, obs_data_t *settings)
 	}
 }
 
+static void switcher_play_pause(void *data, bool pause)
+{
+	struct switcher_info *switcher = data;
+	if (pause) {
+		switcher->state = OBS_MEDIA_STATE_PAUSED;
+	} else {
+		switcher->state = OBS_MEDIA_STATE_PLAYING;
+	}
+}
+
+static void switcher_restart(void *data)
+{
+	struct switcher_info *switcher = data;
+	switcher_switch_to(switcher, SWITCH_FIRST);
+	switcher->state = OBS_MEDIA_STATE_PLAYING;
+}
+
+static void switcher_stop(void *data)
+{
+	struct switcher_info *switcher = data;
+	switcher_switch_to(switcher, SWITCH_NONE);
+	switcher->state = OBS_MEDIA_STATE_STOPPED;
+}
+
+static void switcher_next_slide(void *data)
+{
+	struct switcher_info *switcher = data;
+	switcher_switch_to(switcher, SWITCH_NEXT);
+}
+
+static void switcher_previous_slide(void *data)
+{
+	struct switcher_info *switcher = data;
+	switcher_switch_to(switcher, SWITCH_PREVIOUS);
+}
+
+static enum obs_media_state switcher_get_state(void *data)
+{
+	struct switcher_info *switcher = data;
+	return switcher->state;
+}
+
+
 struct obs_source_info source_switcher = {
 	.id = "source_switcher",
 	.type = OBS_SOURCE_TYPE_INPUT,
 	.output_flags = OBS_OUTPUT_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			OBS_SOURCE_COMPOSITE | OBS_SOURCE_DO_NOT_DUPLICATE,
+			OBS_SOURCE_COMPOSITE | OBS_SOURCE_CONTROLLABLE_MEDIA |
+			OBS_SOURCE_DO_NOT_DUPLICATE,
 	.get_name = switcher_get_name,
 	.create = switcher_create,
 	.destroy = switcher_destroy,
@@ -1622,9 +1669,15 @@ struct obs_source_info source_switcher = {
 	.enum_active_sources = switcher_enum_active_sources,
 	.enum_all_sources = switcher_enum_all_sources,
 	.video_tick = switcher_video_tick,
-	.save = switch_save,
+	.save = switcher_save,
 	.load = switcher_load,
 	.icon_type = OBS_ICON_TYPE_SLIDESHOW,
+	.media_play_pause = switcher_play_pause,
+	.media_restart = switcher_restart,
+	.media_stop = switcher_stop,
+	.media_next = switcher_next_slide,
+	.media_previous = switcher_previous_slide,
+	.media_get_state = switcher_get_state
 };
 
 OBS_DECLARE_MODULE()
