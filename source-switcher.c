@@ -451,7 +451,6 @@ static void switcher_update(void *data, obs_data_t *settings)
 	struct switcher_info *switcher = data;
 	switcher->log = obs_data_get_bool(settings, S_LOG);
 	switcher->loop = obs_data_get_bool(settings, S_LOOP);
-	switcher->state = OBS_MEDIA_STATE_NONE;
 	switcher->current_source_file =
 		obs_data_get_bool(settings, S_CURRENT_SOURCE_FILE);
 	if (switcher->current_source_file) {
@@ -659,11 +658,25 @@ static void switcher_update(void *data, obs_data_t *settings)
 	}
 }
 
+static void current_slide_proc(void *data, calldata_t *cd)
+{
+	struct switcher_info *switcher = data;
+	calldata_set_int(cd, "current_index", switcher->current_index);
+}
+
+static void total_slides_proc(void *data, calldata_t *cd)
+{
+	struct switcher_info *switcher = data;
+	calldata_set_int(cd, "total_files", switcher->sources.num);
+}
+
 static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 {
 	UNUSED_PARAMETER(settings);
 	struct switcher_info *switcher = bzalloc(sizeof(struct switcher_info));
+	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	switcher->source = source;
+	switcher->state = OBS_MEDIA_STATE_PLAYING;
 	da_init(switcher->sources);
 	da_init(switcher->hotkeys);
 	obs_hotkey_register_source(source, "none", obs_module_text("None"),
@@ -684,6 +697,11 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 				   switcher_last_hotkey, switcher);
 	signal_handler_connect(obs_get_signal_handler(), "source_rename",
 			       switcher_source_rename, switcher);
+	proc_handler_add(ph, "void current_index(out int current_index)",
+			 current_slide_proc, switcher);
+	proc_handler_add(ph, "void total_files(out int total_files)",
+			 total_slides_proc, switcher);
+
 	switcher_update(switcher, settings);
 	return switcher;
 }
