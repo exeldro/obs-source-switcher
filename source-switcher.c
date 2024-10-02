@@ -1667,13 +1667,32 @@ static enum obs_media_state switcher_get_state(void *data)
 	return switcher->state;
 }
 
+static int64_t switcher_get_duration(void *data)
+{
+	struct switcher_info *switcher = data;
+	return (int64_t)1000*switcher->sources.num;
+}
+
+static int64_t switcher_get_time(void *data)
+{
+	struct switcher_info *switcher = data;
+	return (int64_t)1000*switcher->current_index;
+}
+
+static void switcher_set_time(void *data, int64_t ms)
+{
+	struct switcher_info *switcher = data;
+	switcher->last_switch_time = obs_get_video_frame_time();
+	switcher->current_index = (int32_t) (ms/1000);
+	switcher_index_changed(switcher);
+}
 
 struct obs_source_info source_switcher = {
 	.id = "source_switcher",
 	.type = OBS_SOURCE_TYPE_INPUT,
 	.output_flags = OBS_OUTPUT_VIDEO | OBS_SOURCE_CUSTOM_DRAW |
-			OBS_SOURCE_COMPOSITE | OBS_SOURCE_CONTROLLABLE_MEDIA |
-			OBS_SOURCE_DO_NOT_DUPLICATE,
+			OBS_SOURCE_COMPOSITE | OBS_SOURCE_DO_NOT_DUPLICATE |
+			OBS_SOURCE_CONTROLLABLE_MEDIA,
 	.get_name = switcher_get_name,
 	.create = switcher_create,
 	.destroy = switcher_destroy,
@@ -1695,7 +1714,11 @@ struct obs_source_info source_switcher = {
 	.media_stop = switcher_stop,
 	.media_next = switcher_next_slide,
 	.media_previous = switcher_previous_slide,
-	.media_get_state = switcher_get_state
+	.media_get_state = switcher_get_state,
+	/* We reuse time slider for progress */
+	.media_get_duration = switcher_get_duration,
+	.media_get_time = switcher_get_time,
+	.media_set_time = switcher_set_time,
 };
 
 OBS_DECLARE_MODULE()
