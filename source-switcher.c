@@ -646,7 +646,7 @@ static void switcher_video_render(void *data, gs_effect_t *effect)
 					obs_source_video_render(switcher->show_transition);
 				}
 			}
-		} else if (switcher->hide_transition && switcher->transition_running == TRANSITION_SHOW) {
+		} else if (switcher->hide_transition && switcher->transition_running == TRANSITION_HIDE) {
 			const uint64_t t = obs_get_video_frame_time();
 			if (t > switcher->last_switch_time &&
 			    t - switcher->last_switch_time > 10000000UL) { // wait 10 ms before start checking state
@@ -882,11 +882,151 @@ static bool open_hide_transition_properties(obs_properties_t *props, obs_propert
 	return false;
 }
 
+
+
+static bool refresh_sources_callback(obs_properties_t *props, obs_property_t *property, void *data)
+{
+	UNUSED_PARAMETER(property);
+	UNUSED_PARAMETER(data);
+	
+	// Get the current sources list property
+	obs_property_t *sources_list = obs_properties_get(props, S_SOURCES);
+	if (!sources_list)
+		return false;
+	
+	// Create browser data structure to enumerate sources
+	struct source_browser_data *browser_data = bzalloc(sizeof(struct source_browser_data));
+	da_init(browser_data->available_sources);
+	da_init(browser_data->selected_sources);
+	
+	// Enumerate all available sources
+	obs_enum_sources(source_browser_enum_callback, browser_data);
+	
+	// Get current sources array
+	obs_data_array_t *current_sources = obs_data_array_create();
+	
+	// Add all available sources to the current list
+	for (size_t i = 0; i < browser_data->available_sources.num; i++) {
+		obs_source_t *source = browser_data->available_sources.array[i];
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "value", obs_source_get_name(source));
+		obs_data_array_push_back(current_sources, item);
+		obs_data_release(item);
+	}
+	
+	// Update the sources list with all available sources
+	obs_property_editable_list_changed(sources_list, current_sources);
+	obs_data_array_release(current_sources);
+	
+	// Clean up the browser data
+	da_free(browser_data->available_sources);
+	da_free(browser_data->selected_sources);
+	bfree(browser_data);
+	
+	// Show a message to the user
+	obs_frontend_push_ui_translation(obs_module_get_string);
+	obs_frontend_show_message_box(obs_module_text("SourcesRefreshed"), 
+		obs_module_text("SourcesRefreshedMessage"), OBS_MESSAGE_INFO);
+	obs_frontend_pop_ui_translation();
+	
+	return true;
+}
+
+// Structure to hold source browser dialog data
+struct source_browser_data {
+	obs_properties_t *props;
+	obs_property_t *sources_list;
+	DARRAY(obs_source_t *) available_sources;
+	DARRAY(bool) selected_sources;
+};
+
+static void source_browser_enum_callback(void *data, obs_source_t *source)
+{
+	struct source_browser_data *browser_data = data;
+	
+	// Skip the switcher source itself to avoid self-reference
+	if (obs_source_get_id(source) && strcmp(obs_source_get_id(source), "source_switcher") == 0)
+		return;
+	
+	// Add source to available sources list
+	da_push_back(browser_data->available_sources, &source);
+	// Initialize as not selected
+	bool selected = false;
+	da_push_back(browser_data->selected_sources, &selected);
+}
+
+static bool browse_sources_callback(obs_properties_t *props, obs_property_t *property, void *data)
+{
+	UNUSED_PARAMETER(property);
+	UNUSED_PARAMETER(data);
+	
+	// Create browser data structure
+	struct source_browser_data *browser_data = bzalloc(sizeof(struct source_browser_data));
+	browser_data->props = props;
+	
+	// Initialize arrays
+	da_init(browser_data->available_sources);
+	da_init(browser_data->selected_sources);
+	
+	// Enumerate all available sources
+	obs_enum_sources(source_browser_enum_callback, browser_data);
+	
+	// Get the current sources list property
+	obs_property_t *sources_list = obs_properties_get(props, S_SOURCES);
+	if (!sources_list) {
+		// Clean up and return
+		da_free(browser_data->available_sources);
+		da_free(browser_data->selected_sources);
+		bfree(browser_data);
+		return false;
+	}
+	
+	// Get current sources array to preserve existing selections
+	obs_data_array_t *current_sources = obs_data_array_create();
+	
+	// Add all available sources to the current list
+	for (size_t i = 0; i < browser_data->available_sources.num; i++) {
+		obs_source_t *source = browser_data->available_sources.array[i];
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "value", obs_source_get_name(source));
+		obs_data_array_push_back(current_sources, item);
+		obs_data_release(item);
+	}
+	
+	// Update the sources list with all available sources
+	obs_property_editable_list_changed(sources_list, current_sources);
+	obs_data_array_release(current_sources);
+	
+	// Clean up the browser data
+	da_free(browser_data->available_sources);
+	da_free(browser_data->selected_sources);
+	bfree(browser_data);
+	
+	// Show a simple message to the user
+	obs_frontend_push_ui_translation(obs_module_get_string);
+	obs_frontend_show_message_box(obs_module_text("SourcesAdded"), 
+		obs_module_text("SourcesAddedMessage"), OBS_MESSAGE_INFO);
+	obs_frontend_pop_ui_translation();
+	
+	return true;
+}
+
 static obs_properties_t *switcher_properties(void *data)
 {
 	obs_property_t *p;
 	obs_properties_t *ppts = obs_properties_create();
+	
+	// Keep the editable list but add a source browser button
 	obs_properties_add_editable_list(ppts, S_SOURCES, obs_module_text("Sources"), OBS_EDITABLE_LIST_TYPE_STRINGS, NULL, NULL);
+	
+	// Add a source browser button to help users select sources
+	obs_properties_add_button(ppts, "browse_sources", obs_module_text("BrowseSources"), 
+		browse_sources_callback);
+	
+	// Add a refresh button to update the source list
+	obs_properties_add_button(ppts, "refresh_sources", obs_module_text("RefreshSources"), 
+		refresh_sources_callback);
+	
 	obs_properties_add_bool(ppts, S_LOOP, obs_module_text("Loop"));
 	obs_properties_add_bool(ppts, S_LOG, obs_module_text("Log"));
 	obs_properties_t *tsppts = obs_properties_create();
