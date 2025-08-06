@@ -11,3 +11,7 @@
 # ignore generated files
 *.generated.*
 **/.Brewfile.lock.json
+
+# ignore local development dependencies
+obs-studio-headers.zip
+obs_deps_unpacked/

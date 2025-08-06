@@ -4,6 +4,14 @@
 #include "util/platform.h"
 #include <obs-frontend-api.h>
 
+// Simplified source browser using dropdown approach
+
+#ifndef OBS_MESSAGE_INFO
+#define OBS_MESSAGE_INFO 0
+#endif
+
+// Removed unused source_browser_data structure - using simpler dropdown approach now
+
 struct switcher_hotkey_info {
 	obs_hotkey_id hotkey_id;
 	obs_source_t *source;
@@ -46,7 +54,7 @@ struct switcher_info {
 static const char *switcher_get_name(void *type_data)
 {
 	UNUSED_PARAMETER(type_data);
-	return obs_module_text("SourceSwitcher");
+	return obs_module_text("Source Switcher");
 }
 
 void switcher_source_rename(void *data, calldata_t *call_data)
@@ -368,7 +376,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 		switcher->current_source_file_path = bstrdup(obs_data_get_string(settings, S_CURRENT_SOURCE_FILE_PATH));
 		switcher->current_source_file_interval = obs_data_get_int(settings, S_CURRENT_SOURCE_FILE_INTERVAL);
 	}
-	obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
+		obs_data_array_t *sources = obs_data_get_array(settings, S_SOURCES);
 	if (sources) {
 		for (size_t i = 0; i < switcher->sources.num; i++) {
 			obs_source_release(switcher->sources.array[i]);
@@ -390,10 +398,13 @@ static void switcher_update(void *data, obs_data_t *settings)
 					struct switcher_hotkey_info h;
 					h.source = source;
 					h.hotkey_id = obs_hotkey_register_source(switcher->source, obs_source_get_name(source),
-										 obs_source_get_name(source),
-										 switcher_switch_source_hotkey, switcher);
+									 obs_source_get_name(source),
+									 switcher_switch_source_hotkey, switcher);
 					da_push_back(switcher->hotkeys, &h);
 				}
+			} else {
+				// Source not found yet - might be loading order issue
+				blog(LOG_INFO, "[Source Switcher] Source '%s' not found during initialization, will retry", source_name);
 			}
 			obs_data_release(item);
 		}
@@ -884,148 +895,116 @@ static bool open_hide_transition_properties(obs_properties_t *props, obs_propert
 
 
 
-static bool refresh_sources_callback(obs_properties_t *props, obs_property_t *property, void *data)
-{
-	UNUSED_PARAMETER(property);
-	UNUSED_PARAMETER(data);
-	
-	// Get the current sources list property
-	obs_property_t *sources_list = obs_properties_get(props, S_SOURCES);
-	if (!sources_list)
-		return false;
-	
-	// Create browser data structure to enumerate sources
-	struct source_browser_data *browser_data = bzalloc(sizeof(struct source_browser_data));
-	da_init(browser_data->available_sources);
-	da_init(browser_data->selected_sources);
-	
-	// Enumerate all available sources
-	obs_enum_sources(source_browser_enum_callback, browser_data);
-	
-	// Get current sources array
-	obs_data_array_t *current_sources = obs_data_array_create();
-	
-	// Add all available sources to the current list
-	for (size_t i = 0; i < browser_data->available_sources.num; i++) {
-		obs_source_t *source = browser_data->available_sources.array[i];
-		obs_data_t *item = obs_data_create();
-		obs_data_set_string(item, "value", obs_source_get_name(source));
-		obs_data_array_push_back(current_sources, item);
-		obs_data_release(item);
-	}
-	
-	// Update the sources list with all available sources
-	obs_property_editable_list_changed(sources_list, current_sources);
-	obs_data_array_release(current_sources);
-	
-	// Clean up the browser data
-	da_free(browser_data->available_sources);
-	da_free(browser_data->selected_sources);
-	bfree(browser_data);
-	
-	// Show a message to the user
-	obs_frontend_push_ui_translation(obs_module_get_string);
-	obs_frontend_show_message_box(obs_module_text("SourcesRefreshed"), 
-		obs_module_text("SourcesRefreshedMessage"), OBS_MESSAGE_INFO);
-	obs_frontend_pop_ui_translation();
-	
-	return true;
-}
+// Removed unused button callback functions - using dropdown approach instead
 
-// Structure to hold source browser dialog data
-struct source_browser_data {
-	obs_properties_t *props;
-	obs_property_t *sources_list;
-	DARRAY(obs_source_t *) available_sources;
-	DARRAY(bool) selected_sources;
-};
-
-static void source_browser_enum_callback(void *data, obs_source_t *source)
+// Callback to populate the source dropdown
+static bool populate_source_dropdown(void *data, obs_source_t *source)
 {
-	struct source_browser_data *browser_data = data;
+	obs_property_t *list = data;
 	
 	// Skip the switcher source itself to avoid self-reference
 	if (obs_source_get_id(source) && strcmp(obs_source_get_id(source), "source_switcher") == 0)
-		return;
+		return true;
 	
-	// Add source to available sources list
-	da_push_back(browser_data->available_sources, &source);
-	// Initialize as not selected
-	bool selected = false;
-	da_push_back(browser_data->selected_sources, &selected);
-}
-
-static bool browse_sources_callback(obs_properties_t *props, obs_property_t *property, void *data)
-{
-	UNUSED_PARAMETER(property);
-	UNUSED_PARAMETER(data);
-	
-	// Create browser data structure
-	struct source_browser_data *browser_data = bzalloc(sizeof(struct source_browser_data));
-	browser_data->props = props;
-	
-	// Initialize arrays
-	da_init(browser_data->available_sources);
-	da_init(browser_data->selected_sources);
-	
-	// Enumerate all available sources
-	obs_enum_sources(source_browser_enum_callback, browser_data);
-	
-	// Get the current sources list property
-	obs_property_t *sources_list = obs_properties_get(props, S_SOURCES);
-	if (!sources_list) {
-		// Clean up and return
-		da_free(browser_data->available_sources);
-		da_free(browser_data->selected_sources);
-		bfree(browser_data);
-		return false;
+	const char *source_name = obs_source_get_name(source);
+	if (source_name && strlen(source_name) > 0) {
+		obs_property_list_add_string(list, source_name, source_name);
 	}
-	
-	// Get current sources array to preserve existing selections
-	obs_data_array_t *current_sources = obs_data_array_create();
-	
-	// Add all available sources to the current list
-	for (size_t i = 0; i < browser_data->available_sources.num; i++) {
-		obs_source_t *source = browser_data->available_sources.array[i];
-		obs_data_t *item = obs_data_create();
-		obs_data_set_string(item, "value", obs_source_get_name(source));
-		obs_data_array_push_back(current_sources, item);
-		obs_data_release(item);
-	}
-	
-	// Update the sources list with all available sources
-	obs_property_editable_list_changed(sources_list, current_sources);
-	obs_data_array_release(current_sources);
-	
-	// Clean up the browser data
-	da_free(browser_data->available_sources);
-	da_free(browser_data->selected_sources);
-	bfree(browser_data);
-	
-	// Show a simple message to the user
-	obs_frontend_push_ui_translation(obs_module_get_string);
-	obs_frontend_show_message_box(obs_module_text("SourcesAdded"), 
-		obs_module_text("SourcesAddedMessage"), OBS_MESSAGE_INFO);
-	obs_frontend_pop_ui_translation();
 	
 	return true;
 }
+
+// Callback when user selects a source from the dropdown
+static bool add_source_from_browser(obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
+	
+	const char *selected_source = obs_data_get_string(settings, "source_browser");
+	
+	if (!selected_source || strlen(selected_source) == 0) {
+		return false;
+	}
+	
+	blog(LOG_INFO, "[Source Switcher] Adding source from dropdown: %s", selected_source);
+	
+	// Get current sources array
+	obs_data_array_t *current_sources = obs_data_get_array(settings, S_SOURCES);
+	if (!current_sources) {
+		current_sources = obs_data_array_create();
+	} else {
+		obs_data_array_addref(current_sources);
+	}
+	
+	// Check if source is already in the list
+	bool already_exists = false;
+	size_t count = obs_data_array_count(current_sources);
+	for (size_t i = 0; i < count; i++) {
+		obs_data_t *item = obs_data_array_item(current_sources, i);
+		const char *existing_name = obs_data_get_string(item, "value");
+		if (existing_name && strcmp(existing_name, selected_source) == 0) {
+			already_exists = true;
+		}
+		obs_data_release(item);
+		if (already_exists)
+			break;
+	}
+	
+	// Add source if it doesn't already exist
+	if (!already_exists) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "value", selected_source);
+		obs_data_array_push_back(current_sources, item);
+		obs_data_release(item);
+		blog(LOG_INFO, "[Source Switcher] Added: %s", selected_source);
+	} else {
+		blog(LOG_INFO, "[Source Switcher] Already exists: %s", selected_source);
+	}
+	
+	// Update the settings
+	obs_data_set_array(settings, S_SOURCES, current_sources);
+	obs_data_array_release(current_sources);
+	
+	// Reset the dropdown to show "Select source..."
+	obs_data_set_string(settings, "source_browser", "");
+	
+	// Return true to refresh the properties UI
+	return true;
+}
+
+// Clean implementation with working dropdown source browser
 
 static obs_properties_t *switcher_properties(void *data)
 {
 	obs_property_t *p;
 	obs_properties_t *ppts = obs_properties_create();
 	
-	// Keep the editable list but add a source browser button
+	// Force a settings update to ensure sources are properly loaded
+	// This fixes initialization issues where sources weren't available during plugin startup
+	struct switcher_info *switcher = data;
+	if (switcher) {
+		obs_data_t *settings = obs_source_get_settings(switcher->source);
+		if (settings) {
+			switcher_update(switcher, settings);
+			obs_data_release(settings);
+		}
+	}
+	
+
+	
+	// Keep the editable list
 	obs_properties_add_editable_list(ppts, S_SOURCES, obs_module_text("Sources"), OBS_EDITABLE_LIST_TYPE_STRINGS, NULL, NULL);
 	
-	// Add a source browser button to help users select sources
-	obs_properties_add_button(ppts, "browse_sources", obs_module_text("BrowseSources"), 
-		browse_sources_callback);
+	// Add a dropdown to help users browse and add sources
+	p = obs_properties_add_list(ppts, "source_browser", obs_module_text("BrowseSources"), 
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_set_modified_callback(p, add_source_from_browser);
 	
-	// Add a refresh button to update the source list
-	obs_properties_add_button(ppts, "refresh_sources", obs_module_text("RefreshSources"), 
-		refresh_sources_callback);
+	// Add default option
+	obs_property_list_add_string(p, "Select source to add...", "");
+	
+	// Populate the dropdown with available sources
+	obs_enum_sources(populate_source_dropdown, p);
 	
 	obs_properties_add_bool(ppts, S_LOOP, obs_module_text("Loop"));
 	obs_properties_add_bool(ppts, S_LOG, obs_module_text("Log"));
@@ -1476,7 +1455,7 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 MODULE_EXPORT const char *obs_module_name(void)
 {
-	return obs_module_text("SourceSwitcher");
+	return obs_module_text("Source Switcher");
 }
 
 bool obs_module_load(void)
