@@ -17,11 +17,18 @@ struct switcher_hotkey_info {
 	obs_source_t *source;
 };
 
+struct source_timing_info {
+	char *source_name;
+	uint64_t duration;
+	uint64_t between_duration;
+};
+
 struct switcher_info {
 	obs_source_t *source;
 	obs_source_t *current_source;
 	DARRAY(obs_source_t *) sources;
 	DARRAY(struct switcher_hotkey_info) hotkeys;
+	DARRAY(struct source_timing_info) source_timings;
 	size_t current_index;
 	bool loop;
 	uint64_t last_switch_time;
@@ -78,7 +85,65 @@ void switcher_source_rename(void *data, calldata_t *call_data)
 		}
 		obs_data_array_release(sources);
 	}
+	
+	// Update source timing info as well
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		if (switcher->source_timings.array[i].source_name && 
+		    strcmp(switcher->source_timings.array[i].source_name, prev_name) == 0) {
+			bfree(switcher->source_timings.array[i].source_name);
+			switcher->source_timings.array[i].source_name = bstrdup(new_name);
+		}
+	}
+	
 	obs_data_release(settings);
+}
+
+uint64_t get_source_duration(struct switcher_info *switcher, const char *source_name)
+{
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		if (switcher->source_timings.array[i].source_name && 
+		    strcmp(switcher->source_timings.array[i].source_name, source_name) == 0) {
+			return switcher->source_timings.array[i].duration;
+		}
+	}
+	// Return global default if no per-source timing is set
+	return switcher->time_switch_duration;
+}
+
+uint64_t get_source_between_duration(struct switcher_info *switcher, const char *source_name)
+{
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		if (switcher->source_timings.array[i].source_name && 
+		    strcmp(switcher->source_timings.array[i].source_name, source_name) == 0) {
+			return switcher->source_timings.array[i].between_duration;
+		}
+	}
+	// Return global default if no per-source timing is set
+	return switcher->time_switch_between;
+}
+
+// Forward declarations
+void set_per_source_defaults(obs_data_t *settings, struct switcher_info *switcher);
+void debug_log_settings(struct switcher_info *switcher, obs_data_t *settings);
+
+void set_source_timing(struct switcher_info *switcher, const char *source_name, uint64_t duration, uint64_t between_duration)
+{
+	// Find existing entry
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		if (switcher->source_timings.array[i].source_name && 
+		    strcmp(switcher->source_timings.array[i].source_name, source_name) == 0) {
+			switcher->source_timings.array[i].duration = duration;
+			switcher->source_timings.array[i].between_duration = between_duration;
+			return;
+		}
+	}
+	
+	// Create new entry
+	struct source_timing_info timing;
+	timing.source_name = bstrdup(source_name);
+	timing.duration = duration;
+	timing.between_duration = between_duration;
+	da_push_back(switcher->source_timings, &timing);
 }
 
 void switcher_index_changed(struct switcher_info *switcher)
@@ -169,6 +234,12 @@ void switcher_index_changed(struct switcher_info *switcher)
 	}
 	switcher->current_source = obs_source_get_ref(dest);
 	obs_source_add_active_child(switcher->source, switcher->current_source);
+	
+	// Reset timing when switching to a new source manually (not through timer)
+	if (!switcher->time_switch || switcher->state != OBS_MEDIA_STATE_PLAYING) {
+		switcher->last_switch_time = obs_get_video_frame_time();
+	}
+	
 	if (switcher->current_source_file && switcher->current_source_file_path && strlen(switcher->current_source_file_path)) {
 		const char *source_name = switcher->current_source ? obs_source_get_name(switcher->current_source) : "";
 		os_quick_write_utf8_file(switcher->current_source_file_path, source_name, strlen(source_name), false);
@@ -448,6 +519,73 @@ static void switcher_update(void *data, obs_data_t *settings)
 	switcher->time_switch_between = obs_data_get_int(settings, S_TIME_SWITCH_BETWEEN);
 	switcher->time_switch_to = (int32_t)obs_data_get_int(settings, S_TIME_SWITCH_TO);
 
+	// Load per-source timing data
+	obs_data_array_t *source_durations = obs_data_get_array(settings, S_SOURCE_DURATIONS);
+	if (source_durations) {
+		// Clear existing timing data
+		for (size_t i = 0; i < switcher->source_timings.num; i++) {
+			bfree(switcher->source_timings.array[i].source_name);
+		}
+		switcher->source_timings.num = 0;
+		
+		const size_t count = obs_data_array_count(source_durations);
+		for (size_t i = 0; i < count; i++) {
+			obs_data_t *item = obs_data_array_item(source_durations, i);
+			const char *source_name = obs_data_get_string(item, "source_name");
+			uint64_t duration = obs_data_get_int(item, "duration");
+			uint64_t between_duration = obs_data_get_int(item, "between_duration");
+			
+			if (source_name && strlen(source_name) > 0) {
+				struct source_timing_info timing;
+				timing.source_name = bstrdup(source_name);
+				timing.duration = duration;
+				timing.between_duration = between_duration;
+				da_push_back(switcher->source_timings, &timing);
+			}
+			obs_data_release(item);
+		}
+		obs_data_array_release(source_durations);
+	}
+	
+	// Also check for per-source timing values from UI
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i]) {
+			const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+			if (source_name && strlen(source_name) > 0) {
+				char duration_key[256];
+				char between_key[256];
+				snprintf(duration_key, sizeof(duration_key), "per_source_duration_%s", source_name);
+				snprintf(between_key, sizeof(between_key), "per_source_between_%s", source_name);
+				
+				uint64_t duration = obs_data_get_int(settings, duration_key);
+				uint64_t between_duration = obs_data_get_int(settings, between_key);
+				
+				// Apply per-source timing if values are set
+				if (duration > 0 || between_duration > 0) {
+					if (duration == 0) duration = switcher->time_switch_duration;
+					if (switcher->log) {
+						blog(LOG_INFO, "[source-switcher: '%s'] Setting per-source timing for '%s': duration=%llums, between=%llums", 
+						     obs_source_get_name(switcher->source), source_name, duration, between_duration);
+					}
+					set_source_timing(switcher, source_name, duration, between_duration);
+				} else {
+					// Remove per-source timing if both values are 0 (use defaults)
+					for (size_t j = 0; j < switcher->source_timings.num; j++) {
+						if (switcher->source_timings.array[j].source_name && 
+						    strcmp(switcher->source_timings.array[j].source_name, source_name) == 0) {
+							bfree(switcher->source_timings.array[j].source_name);
+							da_erase(switcher->source_timings, j);
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Debug logging
+	debug_log_settings(switcher, settings);
+
 	switcher->media_state_switch = obs_data_get_bool(settings, S_MEDIA_STATE_SWITCH);
 	switcher->media_switch_state = (int32_t)obs_data_get_int(settings, S_MEDIA_SWITCH_STATE);
 	switcher->media_state_switch_to = (int32_t)obs_data_get_int(settings, S_MEDIA_STATE_SWITCH_TO);
@@ -537,8 +675,10 @@ static void *switcher_create(obs_data_t *settings, obs_source_t *source)
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	switcher->source = source;
 	switcher->state = OBS_MEDIA_STATE_PLAYING;
+	switcher->last_switch_time = obs_get_video_frame_time();
 	da_init(switcher->sources);
 	da_init(switcher->hotkeys);
+	da_init(switcher->source_timings);
 	obs_hotkey_register_source(source, "none", obs_module_text("None"), switcher_none_hotkey, switcher);
 	obs_hotkey_register_source(source, "next", obs_module_text("Next"), switcher_next_hotkey, switcher);
 	obs_hotkey_register_source(source, "previous", obs_module_text("Previous"), switcher_previous_hotkey, switcher);
@@ -570,8 +710,13 @@ static void switcher_destroy(void *data)
 	for (size_t i = 0; i < switcher->sources.num; i++) {
 		obs_source_release(switcher->sources.array[i]);
 	}
+	// Clean up source timing info
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		bfree(switcher->source_timings.array[i].source_name);
+	}
 	da_free(switcher->sources);
 	da_free(switcher->hotkeys);
+	da_free(switcher->source_timings);
 	obs_source_release(switcher->transition);
 	obs_source_release(switcher->show_transition);
 	obs_source_release(switcher->hide_transition);
@@ -972,6 +1117,55 @@ static bool add_source_from_browser(obs_properties_t *props, obs_property_t *pro
 	return true;
 }
 
+// Callback for source timing button
+static bool open_source_timing_dialog(obs_properties_t *props, obs_property_t *property, void *data)
+{
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(property);
+	struct switcher_info *switcher = data;
+	
+	// Create a dialog to configure per-source timing
+	obs_properties_t *timing_props = obs_properties_create();
+	
+	// Add controls for each source
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i]) {
+			const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+			if (source_name && strlen(source_name) > 0) {
+				// Create a group for this source
+				obs_properties_t *source_group = obs_properties_create();
+				
+				// Duration setting
+				char duration_key[256];
+				snprintf(duration_key, sizeof(duration_key), "duration_%s", source_name);
+				obs_property_t *duration_prop = obs_properties_add_int(source_group, duration_key, 
+					"Duration (ms)", 50, 1000000UL, 1000);
+				obs_property_int_set_suffix(duration_prop, "ms");
+				
+				// Between duration setting
+				char between_key[256];
+				snprintf(between_key, sizeof(between_key), "between_%s", source_name);
+				obs_property_t *between_prop = obs_properties_add_int(source_group, between_key, 
+					"Between Duration (ms)", 0, 1000000UL, 1000);
+				obs_property_int_set_suffix(between_prop, "ms");
+				
+				// Add the group
+				char group_name[256];
+				snprintf(group_name, sizeof(group_name), "timing_%s", source_name);
+				obs_properties_add_group(timing_props, group_name, source_name, 
+					OBS_GROUP_NORMAL, source_group);
+			}
+		}
+	}
+	
+	// For now, just show a message that this feature is available
+	// In a full implementation, you'd want to create a proper dialog
+	blog(LOG_INFO, "[Source Switcher] Per-source timing configuration is now available!");
+	
+	obs_properties_destroy(timing_props);
+	return false;
+}
+
 // Clean implementation with working dropdown source browser
 
 static obs_properties_t *switcher_properties(void *data)
@@ -986,6 +1180,8 @@ static obs_properties_t *switcher_properties(void *data)
 		obs_data_t *settings = obs_source_get_settings(switcher->source);
 		if (settings) {
 			switcher_update(switcher, settings);
+			// Set defaults for per-source timing controls
+			set_per_source_defaults(settings, switcher);
 			obs_data_release(settings);
 		}
 	}
@@ -1009,13 +1205,57 @@ static obs_properties_t *switcher_properties(void *data)
 	obs_properties_add_bool(ppts, S_LOOP, obs_module_text("Loop"));
 	obs_properties_add_bool(ppts, S_LOG, obs_module_text("Log"));
 	obs_properties_t *tsppts = obs_properties_create();
-	p = obs_properties_add_int(tsppts, S_TIME_SWITCH_DURATION, obs_module_text("Duration"), 50, 1000000UL, 1000);
+	
+	// Global timing settings (fallback values)
+	p = obs_properties_add_int(tsppts, S_TIME_SWITCH_DURATION, "Default Duration", 50, 1000000UL, 1000);
 	obs_property_int_set_suffix(p, "ms");
-	p = obs_properties_add_int(tsppts, S_TIME_SWITCH_BETWEEN, obs_module_text("Between"), 0, 1000000UL, 1000);
+	p = obs_properties_add_int(tsppts, S_TIME_SWITCH_BETWEEN, "Default Between", 0, 1000000UL, 1000);
 	obs_property_int_set_suffix(p, "ms");
 	p = obs_properties_add_list(tsppts, S_TIME_SWITCH_TO, obs_module_text("SwitchTo"), OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
 	prop_list_add_switch_to(p);
+	
+	// Add per-source timing controls
+	obs_properties_t *per_source_group = obs_properties_create();
+	obs_properties_add_text(per_source_group, "per_source_info", 
+		"Configure individual timing for each source. Leave at 0 to use default values.", 
+		OBS_TEXT_INFO);
+	
+	// Add timing controls for each source
+	if (switcher) {
+		for (size_t i = 0; i < switcher->sources.num; i++) {
+			if (switcher->sources.array[i]) {
+				const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+				if (source_name && strlen(source_name) > 0) {
+					obs_properties_t *source_timing_group = obs_properties_create();
+					
+					// Duration setting for this source
+					char duration_key[256];
+					snprintf(duration_key, sizeof(duration_key), "per_source_duration_%s", source_name);
+					obs_property_t *duration_prop = obs_properties_add_int(source_timing_group, duration_key, 
+						"Duration (ms)", 0, 1000000UL, 1000);
+					obs_property_int_set_suffix(duration_prop, "ms");
+					
+					// Between duration setting for this source
+					char between_key[256];
+					snprintf(between_key, sizeof(between_key), "per_source_between_%s", source_name);
+					obs_property_t *between_prop = obs_properties_add_int(source_timing_group, between_key, 
+						"Between Duration (ms)", 0, 1000000UL, 1000);
+					obs_property_int_set_suffix(between_prop, "ms");
+					
+					// Add the group for this source
+					char group_name[256];
+					snprintf(group_name, sizeof(group_name), "source_timing_%s", source_name);
+					obs_properties_add_group(per_source_group, group_name, source_name, 
+						OBS_GROUP_NORMAL, source_timing_group);
+				}
+			}
+		}
+	}
+	
+	obs_properties_add_group(tsppts, "per_source_timing", "Per-Source Timing", 
+		OBS_GROUP_NORMAL, per_source_group);
+	
 	obs_properties_add_group(ppts, S_TIME_SWITCH, obs_module_text("TimeSwitch"), OBS_GROUP_CHECKABLE, tsppts);
 
 	obs_properties_t *mssppts = obs_properties_create();
@@ -1112,6 +1352,81 @@ void switcher_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, S_TRANSITION_SCALE, OBS_TRANSITION_SCALE_ASPECT);
 	obs_data_set_default_int(settings, S_TRANSITION_ALIGNMENT, OBS_ALIGN_CENTER);
 	obs_data_set_default_bool(settings, S_TRANSITION_RESIZE, true);
+	
+	// Per-source timing defaults are 0 (use global defaults)
+	// Individual source defaults will be set dynamically as needed
+}
+
+// Helper function to set defaults for per-source timing UI controls
+void set_per_source_defaults(obs_data_t *settings, struct switcher_info *switcher)
+{
+	if (!switcher) return;
+	
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i]) {
+			const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+			if (source_name && strlen(source_name) > 0) {
+				char duration_key[256];
+				char between_key[256];
+				snprintf(duration_key, sizeof(duration_key), "per_source_duration_%s", source_name);
+				snprintf(between_key, sizeof(between_key), "per_source_between_%s", source_name);
+				
+				// Set defaults if not already set
+				if (!obs_data_has_user_value(settings, duration_key)) {
+					uint64_t current_duration = get_source_duration(switcher, source_name);
+					if (current_duration != switcher->time_switch_duration) {
+						obs_data_set_default_int(settings, duration_key, current_duration);
+					} else {
+						obs_data_set_default_int(settings, duration_key, 0);
+					}
+				}
+				
+				if (!obs_data_has_user_value(settings, between_key)) {
+					uint64_t current_between = get_source_between_duration(switcher, source_name);
+					if (current_between != switcher->time_switch_between) {
+						obs_data_set_default_int(settings, between_key, current_between);
+					} else {
+						obs_data_set_default_int(settings, between_key, 0);
+					}
+				}
+			}
+		}
+	}
+}
+
+// Debug function to log current settings
+void debug_log_settings(struct switcher_info *switcher, obs_data_t *settings)
+{
+	if (!switcher->log) return;
+	
+	blog(LOG_INFO, "[source-switcher: '%s'] === Settings Debug ===", obs_source_get_name(switcher->source));
+	blog(LOG_INFO, "[source-switcher: '%s'] Time switch: %s", obs_source_get_name(switcher->source), 
+	     switcher->time_switch ? "enabled" : "disabled");
+	blog(LOG_INFO, "[source-switcher: '%s'] Global duration: %llums, between: %llums", 
+	     obs_source_get_name(switcher->source), switcher->time_switch_duration, switcher->time_switch_between);
+	
+	blog(LOG_INFO, "[source-switcher: '%s'] Per-source timings (%zu entries):", 
+	     obs_source_get_name(switcher->source), switcher->source_timings.num);
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		blog(LOG_INFO, "[source-switcher: '%s']   %s: duration=%llums, between=%llums", 
+		     obs_source_get_name(switcher->source), 
+		     switcher->source_timings.array[i].source_name,
+		     switcher->source_timings.array[i].duration,
+		     switcher->source_timings.array[i].between_duration);
+	}
+	
+	blog(LOG_INFO, "[source-switcher: '%s'] Sources (%zu total):", obs_source_get_name(switcher->source), switcher->sources.num);
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i]) {
+			const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+			uint64_t effective_duration = get_source_duration(switcher, source_name);
+			uint64_t effective_between = get_source_between_duration(switcher, source_name);
+			blog(LOG_INFO, "[source-switcher: '%s']   %s: effective_duration=%llums, effective_between=%llums", 
+			     obs_source_get_name(switcher->source), source_name ? source_name : "null", 
+			     effective_duration, effective_between);
+		}
+	}
+	blog(LOG_INFO, "[source-switcher: '%s'] === End Settings Debug ===", obs_source_get_name(switcher->source));
 }
 
 uint32_t switcher_get_width(void *data)
@@ -1216,14 +1531,34 @@ void switcher_video_tick(void *data, float seconds)
 	if (switcher->time_switch && switcher->state == OBS_MEDIA_STATE_PLAYING) {
 		const uint64_t t = obs_get_video_frame_time();
 		if (switcher->current_source == NULL) {
+			// Use global between duration when no source is active
+			uint64_t between_duration = switcher->time_switch_between;
 			if (t > switcher->last_switch_time &&
-			    t - switcher->last_switch_time > switcher->time_switch_between * 1000000UL) {
+			    t - switcher->last_switch_time > between_duration * 1000000UL) {
 				switcher_switch_to(switcher, switcher->time_switch_to);
 			}
 		} else {
+			// Get per-source timing for current source
+			const char *source_name = obs_source_get_name(switcher->current_source);
+			uint64_t source_duration = get_source_duration(switcher, source_name);
+			uint64_t between_duration = get_source_between_duration(switcher, source_name);
+			
+			uint64_t elapsed_time = (t > switcher->last_switch_time) ? (t - switcher->last_switch_time) / 1000000UL : 0;
+			
+			if (switcher->log && elapsed_time % 1000 == 0) {  // Log every second
+				blog(LOG_INFO, "[source-switcher: '%s'] Source '%s': elapsed=%llums, duration=%llums, between=%llums", 
+				     obs_source_get_name(switcher->source), source_name ? source_name : "null", 
+				     elapsed_time, source_duration, between_duration);
+			}
+			
 			if (t > switcher->last_switch_time &&
-			    t - switcher->last_switch_time > switcher->time_switch_duration * 1000000UL) {
-				if (switcher->time_switch_between > 0) {
+			    t - switcher->last_switch_time > source_duration * 1000000UL) {
+				if (switcher->log) {
+					blog(LOG_INFO, "[source-switcher: '%s'] Switching from '%s' after %llums (duration was %llums)", 
+					     obs_source_get_name(switcher->source), source_name ? source_name : "null", 
+					     elapsed_time, source_duration);
+				}
+				if (between_duration > 0) {
 					switcher_switch_to(switcher, SWITCH_NONE);
 				} else {
 					switcher_switch_to(switcher, switcher->time_switch_to);
@@ -1294,6 +1629,47 @@ void switcher_save(void *data, obs_data_t *settings)
 	} else {
 		obs_data_set_int(settings, "current_index", -1);
 	}
+	
+	// Save per-source timing data
+	obs_data_array_t *source_durations = obs_data_array_create();
+	for (size_t i = 0; i < switcher->source_timings.num; i++) {
+		obs_data_t *item = obs_data_create();
+		obs_data_set_string(item, "source_name", switcher->source_timings.array[i].source_name);
+		obs_data_set_int(item, "duration", switcher->source_timings.array[i].duration);
+		obs_data_set_int(item, "between_duration", switcher->source_timings.array[i].between_duration);
+		obs_data_array_push_back(source_durations, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(settings, S_SOURCE_DURATIONS, source_durations);
+	obs_data_array_release(source_durations);
+	
+	// Also save UI values for per-source timing
+	for (size_t i = 0; i < switcher->sources.num; i++) {
+		if (switcher->sources.array[i]) {
+			const char *source_name = obs_source_get_name(switcher->sources.array[i]);
+			if (source_name && strlen(source_name) > 0) {
+				char duration_key[256];
+				char between_key[256];
+				snprintf(duration_key, sizeof(duration_key), "per_source_duration_%s", source_name);
+				snprintf(between_key, sizeof(between_key), "per_source_between_%s", source_name);
+				
+				// Check if these keys exist in current settings first
+				obs_data_t *current_settings = obs_source_get_settings(switcher->source);
+				if (current_settings) {
+					if (obs_data_has_user_value(current_settings, duration_key)) {
+						uint64_t ui_duration = obs_data_get_int(current_settings, duration_key);
+						obs_data_set_int(settings, duration_key, ui_duration);
+					}
+					if (obs_data_has_user_value(current_settings, between_key)) {
+						uint64_t ui_between = obs_data_get_int(current_settings, between_key);
+						obs_data_set_int(settings, between_key, ui_between);
+					}
+					obs_data_release(current_settings);
+				}
+			}
+		}
+	}
+	
 	if (switcher->transition) {
 		obs_data_t *s = obs_source_get_settings(switcher->transition);
 		const char *j = obs_data_get_json(s);

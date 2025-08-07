@@ -29,6 +29,8 @@
 #define S_CURRENT_SOURCE_FILE_PATH "current_source_file_path"
 #define S_CURRENT_SOURCE_FILE_INTERVAL "current_source_file_interval"
 
+#define S_SOURCE_DURATIONS "source_durations"
+
 #define SWITCH_NONE 0
 #define SWITCH_NEXT 1
 #define SWITCH_PREVIOUS 2
