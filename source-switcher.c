@@ -17,6 +17,7 @@ struct switcher_info {
 	size_t current_index;
 	bool loop;
 	uint64_t last_switch_time;
+	uint32_t playback_behavior;
 	bool log;
 
 	bool time_switch;
@@ -363,6 +364,7 @@ static void switcher_update(void *data, obs_data_t *settings)
 	switcher->log = obs_data_get_bool(settings, S_LOG);
 	switcher->loop = obs_data_get_bool(settings, S_LOOP);
 	switcher->current_source_file = obs_data_get_bool(settings, S_CURRENT_SOURCE_FILE);
+	switcher->playback_behavior = (uint32_t)obs_data_get_int(settings, S_BEHAVIOR);
 	if (switcher->current_source_file) {
 		bfree(switcher->current_source_file_path);
 		switcher->current_source_file_path = bstrdup(obs_data_get_string(settings, S_CURRENT_SOURCE_FILE_PATH));
@@ -887,6 +889,13 @@ static obs_properties_t *switcher_properties(void *data)
 	obs_property_t *p;
 	obs_properties_t *ppts = obs_properties_create();
 	obs_properties_add_editable_list(ppts, S_SOURCES, obs_module_text("Sources"), OBS_EDITABLE_LIST_TYPE_STRINGS, NULL, NULL);
+
+	p = obs_properties_add_list(ppts, S_BEHAVIOR, obs_module_text("PlaybackBehavior"), OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("AlwaysPlay"), SWITCH_BEHAVIOR_ALWAYS_PLAY);
+	obs_property_list_add_int(p, obs_module_text("StopRestart"), SWITCH_BEHAVIOR_STOP_RESTART);
+	obs_property_list_add_int(p, obs_module_text("PauseUnpause"), SWITCH_BEHAVIOR_PAUSE_UNPAUSE);
+
 	obs_properties_add_bool(ppts, S_LOOP, obs_module_text("Loop"));
 	obs_properties_add_bool(ppts, S_LOG, obs_module_text("Log"));
 	obs_properties_t *tsppts = obs_properties_create();
@@ -929,22 +938,22 @@ static obs_properties_t *switcher_properties(void *data)
 
 	obs_property_set_modified_callback2(p, switcher_transition_changed, data);
 	obs_property_list_add_string(p, obs_module_text("None"), "");
-	obs_properties_add_button(transition_group, S_TRANSITION_PROPERTIES, obs_module_text("Properties"),
-				  open_transition_properties);
+	obs_properties_add_button2(transition_group, S_TRANSITION_PROPERTIES, obs_module_text("Properties"),
+				   open_transition_properties, data);
 	obs_property_t *sp = obs_properties_add_list(transition_group, S_SHOW_TRANSITION, obs_module_text("ShowTransitionType"),
 						     OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
 	obs_property_set_modified_callback2(sp, switcher_transition_changed, data);
 	obs_property_list_add_string(sp, obs_module_text("None"), "");
-	obs_properties_add_button(transition_group, S_SHOW_TRANSITION_PROPERTIES, obs_module_text("Properties"),
-				  open_show_transition_properties);
+	obs_properties_add_button2(transition_group, S_SHOW_TRANSITION_PROPERTIES, obs_module_text("Properties"),
+				   open_show_transition_properties, data);
 	obs_property_t *hp = obs_properties_add_list(transition_group, S_HIDE_TRANSITION, obs_module_text("HideTransitionType"),
 						     OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
 	obs_property_set_modified_callback2(hp, switcher_transition_changed, data);
 	obs_property_list_add_string(hp, obs_module_text("None"), "");
-	obs_properties_add_button(transition_group, S_HIDE_TRANSITION_PROPERTIES, obs_module_text("Properties"),
-				  open_hide_transition_properties);
+	obs_properties_add_button2(transition_group, S_HIDE_TRANSITION_PROPERTIES, obs_module_text("Properties"),
+				   open_hide_transition_properties, data);
 	size_t idx = 0;
 	const char *id;
 	while (obs_enum_transition_types(idx++, &id)) {
@@ -1293,6 +1302,26 @@ static void switcher_set_time(void *data, int64_t ms)
 	switcher_index_changed(switcher);
 }
 
+static void switcher_activate(void *data)
+{
+	struct switcher_info *switcher = data;
+	if (switcher->playback_behavior == SWITCH_BEHAVIOR_PAUSE_UNPAUSE) {
+		switcher->state = OBS_MEDIA_STATE_PLAYING;
+	} else if (switcher->playback_behavior == SWITCH_BEHAVIOR_STOP_RESTART) {
+		switcher_restart(data);
+	}
+}
+
+static void switcher_deactivate(void *data)
+{
+	struct switcher_info *switcher = data;
+	if (switcher->playback_behavior == SWITCH_BEHAVIOR_PAUSE_UNPAUSE) {
+		switcher->state = OBS_MEDIA_STATE_PAUSED;
+	} else if (switcher->playback_behavior == SWITCH_BEHAVIOR_STOP_RESTART) {
+		switcher_stop(data);
+	}
+}
+
 struct obs_source_info source_switcher = {
 	.id = "source_switcher",
 	.type = OBS_SOURCE_TYPE_INPUT,
@@ -1324,6 +1353,8 @@ struct obs_source_info source_switcher = {
 	.media_get_duration = switcher_get_duration,
 	.media_get_time = switcher_get_time,
 	.media_set_time = switcher_set_time,
+	.activate = switcher_activate,
+	.deactivate = switcher_deactivate,
 };
 
 OBS_DECLARE_MODULE()

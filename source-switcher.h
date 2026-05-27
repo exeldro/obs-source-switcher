@@ -3,6 +3,7 @@
 #define S_SOURCES "sources"
 #define S_LOG "log"
 #define S_LOOP "loop"
+#define S_BEHAVIOR "playback_behavior"
 
 #define S_TIME_SWITCH "time_switch"
 #define S_TIME_SWITCH_DURATION "time_switch_duration"
@@ -40,3 +41,7 @@
 #define TRANSITION_NORMAL 1
 #define TRANSITION_SHOW 2
 #define TRANSITION_HIDE 3
+
+#define SWITCH_BEHAVIOR_ALWAYS_PLAY 0
+#define SWITCH_BEHAVIOR_PAUSE_UNPAUSE 1
+#define SWITCH_BEHAVIOR_STOP_RESTART 2
